@@ -1,0 +1,354 @@
+[
+  {
+    "number": 16,
+    "sanad": {
+      "narrator_count": 7,
+      "start": 6,
+      "end": 90,
+      "narrators": [
+        {
+          "name": "علي بن محمد",
+          "start": 6,
+          "end": 17,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "علي",
+              "start": 6,
+              "end": 9,
+              "learned": true
+            },
+            {
+              "text": "بن",
+              "start": 10,
+              "end": 12,
+              "kind": "ibn"
+            },
+            {
+              "text": "محمد",
+              "start": 13,
+              "end": 17,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "سهل بن زياد",
+          "start": 22,
+          "end": 33,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "سهل",
+              "start": 22,
+              "end": 25,
+              "learned": true
+            },
+            {
+              "text": "بن",
+              "start": 26,
+              "end": 28,
+              "kind": "ibn"
+            },
+            {
+              "text": "زياد",
+              "start": 29,
+              "end": 33,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "النوفلي",
+          "start": 38,
+          "end": 45,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "النوفلي",
+              "start": 38,
+              "end": 45,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "السكوني",
+          "start": 50,
+          "end": 57,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "السكوني",
+              "start": 50,
+              "end": 57,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "جعفر",
+          "start": 63,
+          "end": 67,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "جعفر",
+              "start": 63,
+              "end": 67,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "ابيه",
+          "start": 72,
+          "end": 76,
+          "is_rasoul": false,
+          "is_relative": true,
+          "parts": [
+            {
+              "text": "ابيه",
+              "start": 72,
+              "end": 76,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "عليهما السلام",
+          "start": 77,
+          "end": 90,
+          "is_rasoul": true,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "عليهما",
+              "start": 77,
+              "end": 83,
+              "learned": false
+            },
+            {
+              "text": "السلام",
+              "start": 84,
+              "end": 90,
+              "learned": false
+            }
+          ]
+        }
+      ]
+    },
+    "matn": {
+      "start": 91,
+      "end": 195,
+      "text": "قال: قال امير المءمنين عليه السلام: ان قلوب الجهال تستفزها الاطماع ، وترتهنها المنا، وتستعلقها الخداءع."
+    },
+    "kitab": "",
+    "bab": ""
+  },
+  {
+    "number": 17,
+    "sanad": {
+      "narrator_count": 7,
+      "start": 200,
+      "end": 339,
+      "narrators": [
+        {
+          "name": "علي بن ابراهيم",
+          "start": 200,
+          "end": 214,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "علي",
+              "start": 200,
+              "end": 203,
+              "learned": true
+            },
+            {
+              "text": "بن",
+              "start": 204,
+              "end": 206,
+              "kind": "ibn"
+            },
+            {
+              "text": "ابراهيم",
+              "start": 207,
+              "end": 214,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "ابيه",
+          "start": 219,
+          "end": 223,
+          "is_rasoul": false,
+          "is_relative": true,
+          "parts": [
+            {
+              "text": "ابيه",
+              "start": 219,
+              "end": 223,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "جعفر بن محمد الاشعري",
+          "start": 228,
+          "end": 248,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "جعفر",
+              "start": 228,
+              "end": 232,
+              "learned": false
+            },
+            {
+              "text": "بن",
+              "start": 233,
+              "end": 235,
+              "kind": "ibn"
+            },
+            {
+              "text": "محمد",
+              "start": 236,
+              "end": 240,
+              "learned": false
+            },
+            {
+              "text": "الاشعري",
+              "start": 241,
+              "end": 248,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "عبيد الله الدهقان",
+          "start": 253,
+          "end": 270,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "عبيد",
+              "start": 253,
+              "end": 257,
+              "learned": false
+            },
+            {
+              "text": "الله",
+              "start": 258,
+              "end": 262,
+              "learned": false
+            },
+            {
+              "text": "الدهقان",
+              "start": 263,
+              "end": 270,
+              "kind": "other"
+            }
+          ]
+        },
+        {
+          "name": "ابراهيم بن عبد الحميد",
+          "start": 284,
+          "end": 305,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "ابراهيم",
+              "start": 284,
+              "end": 291,
+              "learned": false
+            },
+            {
+              "text": "بن",
+              "start": 292,
+              "end": 294,
+              "kind": "ibn"
+            },
+            {
+              "text": "عبد",
+              "start": 295,
+              "end": 298,
+              "learned": false
+            },
+            {
+              "text": "الحميد",
+              "start": 299,
+              "end": 305,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "ابو عبد الله",
+          "start": 315,
+          "end": 327,
+          "is_rasoul": false,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "ابو",
+              "start": 315,
+              "end": 318,
+              "kind": "ab"
+            },
+            {
+              "text": "عبد",
+              "start": 319,
+              "end": 322,
+              "learned": false
+            },
+            {
+              "text": "الله",
+              "start": 323,
+              "end": 327,
+              "learned": false
+            }
+          ]
+        },
+        {
+          "name": "عليه السلام",
+          "start": 328,
+          "end": 339,
+          "is_rasoul": true,
+          "is_relative": false,
+          "parts": [
+            {
+              "text": "عليه",
+              "start": 328,
+              "end": 332,
+              "learned": false
+            },
+            {
+              "text": "السلام",
+              "start": 333,
+              "end": 339,
+              "learned": false
+            }
+          ]
+        }
+      ]
+    },
+    "matn": {
+      "start": 340,
+      "end": 368,
+      "text": "اكمل الناس عقلا احسنهم خلقا."
+    },
+    "kitab": "",
+    "bab": ""
+  }
+]

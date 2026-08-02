@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام تحليل الحديث والرجال</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root{
+    --ink:#22201b; --paper:#f6f1e7; --card:#fffdf9; --line:#e0d6c0;
+    --accent:#7a5a2c; --accent2:#3d6b5c; --amber:#b07c1d; --red:#a5432f;
+    --muted:#938a78; --sidebar:#2c2620; --sidebar-ink:#e8dfcb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);
+    font-family:"Noto Naskh Arabic","Amiri","Segoe UI",serif;display:flex;overflow:hidden}
+  /* ---------- sidebar ---------- */
+  .sidebar{width:230px;background:var(--sidebar);color:var(--sidebar-ink);
+    height:100vh;display:flex;flex-direction:column;flex-shrink:0}
+  .brand{padding:22px 20px;border-bottom:1px solid #443c30}
+  .brand h1{font-size:17px;font-weight:700} .brand p{font-size:11px;color:#9a8f78;margin-top:4px}
+  .nav{flex:1;padding:12px 0}
+  .navitem{padding:13px 20px;cursor:pointer;font-size:14px;color:#c9bfa8;
+    display:flex;align-items:center;gap:11px;border-right:3px solid transparent}
+  .navitem:hover{background:#372f26}
+  .navitem.active{background:#372f26;color:#fff;border-right-color:var(--amber);font-weight:700}
+  .navitem .n{width:22px;height:22px;border-radius:50%;background:#443c30;
+    display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+  .navitem.active .n{background:var(--amber);color:#2c2620}
+  .conn{margin:14px 20px;padding:7px 12px;border-radius:8px;font-size:12px;text-align:center}
+  .conn.ok{background:#2f4a3f;color:#a9d6c3} .conn.off{background:#4a2f2c;color:#e0a89c}
+  /* ---------- main ---------- */
+  .main{flex:1;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
+  .topbar{padding:18px 30px;border-bottom:1px solid var(--line);background:var(--card);flex-shrink:0}
+  .topbar h2{font-size:20px;color:var(--accent)} .topbar p{font-size:13px;color:var(--muted);margin-top:3px}
+  .content{padding:24px 30px;flex:1}
+  .page{display:none} .page.active{display:block}
+  /* controls */
+  .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:20px;
+    background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:9px 17px;font-size:14px;cursor:pointer;font-family:inherit}
+  .btn:disabled{opacity:.5} .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  input[type=text],input[type=number],select{padding:8px 11px;border:1px solid var(--line);border-radius:7px;font-family:inherit;font-size:13px;background:var(--paper)}
+  input[type=text]{width:140px} label.opt{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  /* stats */
+  .stats{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 20px;text-align:center;min-width:110px}
+  .stat .num{font-size:25px;font-weight:700;color:var(--accent)}
+  .stat.good .num{color:var(--accent2)} .stat.warn .num{color:var(--red)}
+  .stat .lbl{font-size:12px;color:var(--muted);margin-top:3px}
+  /* segmentation */
+  .subtabs{display:flex;gap:3px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+  .subtab{padding:9px 18px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:3px solid transparent}
+  .subtab.active{color:var(--accent);font-weight:700;border-bottom-color:var(--accent)}
+  .subtab.clean.active{color:var(--accent2);border-bottom-color:var(--accent2)}
+  .subtab.sus.active{color:var(--red);border-bottom-color:var(--red)}
+  .bookprev{background:#f0e9d8;border:1px solid var(--line);border-radius:9px;padding:14px;font-size:13px;color:#6a614f;max-height:140px;overflow:auto;margin-bottom:18px;white-space:pre-wrap;line-height:1.9}
+  .hadith{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin-bottom:13px}
+  .hadith.clean{border-right:4px solid var(--accent2)} .hadith.bad{border-right:4px solid var(--red)}
+  .hnum{font-size:13px;color:var(--accent);font-weight:700;margin-bottom:9px}
+  .badge{font-size:11px;padding:2px 10px;border-radius:20px;border:1px solid var(--line);margin-right:5px}
+  .badge.num{background:#eef3f0;color:var(--accent2)} .badge.bad{background:#f7e9e5;color:var(--red)}
+  .sec{font-size:12px;color:var(--muted);margin:10px 0 5px;font-weight:700}
+  .orig{background:#f0e9d8;border-radius:7px;padding:10px 13px;font-size:13px;color:#6a614f;line-height:1.9}
+  .chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .narr{background:#efe8d8;border:1px solid var(--line);border-radius:6px;padding:5px 11px;font-size:14px}
+  .narr.rasoul{background:#f3e6d0;border-color:var(--amber);color:var(--accent);font-weight:700}
+  .arrow{color:var(--accent)}
+  .matn{background:var(--paper);border-right:3px solid var(--accent2);padding:10px 14px;border-radius:0 8px 8px 0;font-size:14px;line-height:1.9}
+  .pager{display:flex;gap:8px;justify-content:center;padding:16px;align-items:center}
+  .pager button{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 14px;cursor:pointer;font-family:inherit}
+  .msg{color:var(--muted);padding:34px;text-align:center}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:middle}
+  @keyframes s{to{transform:rotate(360deg)}}
+  /* graph tree */
+  .treewrap{display:flex;gap:16px}
+  .treepane{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;height:600px;overflow:hidden;position:relative}
+  .treepane svg{width:100%;height:100%}
+  .picker{width:250px;flex-shrink:0}
+  .picker input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-family:inherit;margin-bottom:8px;background:var(--card)}
+  .plist{background:var(--card);border:1px solid var(--line);border-radius:10px;max-height:552px;overflow-y:auto}
+  .prow{padding:9px 13px;border-bottom:1px solid #f0e9d8;cursor:pointer;font-size:14px;display:flex;justify-content:space-between}
+  .prow:hover{background:var(--paper)} .prow.sel{background:#efe6d2;border-right:3px solid var(--accent)}
+  .prow .oc{color:var(--muted);font-size:12px}
+  .node-r rect{cursor:pointer}
+  .node-r text{font-family:"Noto Naskh Arabic",serif;font-size:13px;pointer-events:none}
+  .hint2{position:absolute;top:10px;left:10px;background:rgba(255,253,249,.9);border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:11px;color:var(--muted)}
+  /* table2 */
+  .t2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .t2 .cell{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;text-align:center}
+  .t2 .cell .lbl{font-size:13px;color:var(--muted)} .t2 .cell .v{font-size:36px;font-weight:700;margin-top:8px}
+  .t2 .ng .v{color:var(--red)} .t2 .wg .v{color:var(--accent2)}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px 17px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="brand"><h1>تحليل الحديث والرجال</h1><p>Cross-Document NLP · ANGE</p></div>
+  <div class="nav">
+    <div class="navitem active" onclick="nav('seg',this)"><span class="n">١</span> تقطيع الحديث</div>
+    <div class="navitem" onclick="nav('graph',this)"><span class="n">٢</span> شبكة الرواة</div>
+    <div class="navitem" onclick="nav('merge',this)"><span class="n">٣</span> دمج الشبكات</div>
+    <div class="navitem" onclick="nav('bio',this)"><span class="n">٤</span> كتاب الرجال</div>
+    <div class="navitem" onclick="nav('link',this)"><span class="n">٥</span> الربط + Table 2</div>
+  </div>
+  <div id="conn" class="conn off">غير متصل</div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar"><h2 id="ttl">تقطيع الحديث</h2><p id="tsub">ارفع كتاباً، قطّعه، وراجع السند والمتن لكل حديث</p></div>
+  <div class="content">
+
+  <!-- 1 SEG -->
+  <div class="page active" id="p-seg">
+    <div class="toolbar">
+      <input type="file" id="segFile" accept=".txt">
+      <label class="opt">الاسم <input type="text" id="segName" value="kafi1"></label>
+      <label class="opt">start marker <input type="text" id="segMarker" placeholder="كتاب العقل"></label>
+      <label class="opt"><input type="checkbox" id="segWojood" checked> Wojood</label>
+      <button class="btn" id="segGo" onclick="doSegment()">قطّع الأحاديث</button>
+    </div>
+    <div id="segStats"></div>
+    <div id="bookPrev"></div>
+    <div id="segResult"></div>
+  </div>
+
+  <!-- 2 GRAPH -->
+  <div class="page" id="p-graph">
+    <div class="toolbar">
+      <label class="opt">الكتاب <select id="graphBook"></select></label>
+      <label class="opt">threshold <input type="number" id="graphTh" value="0.5" step="0.1" style="width:70px"></label>
+      <button class="btn" onclick="doBuildGraph()">ابنِ الشبكة</button>
+    </div>
+    <div id="graphStats"></div>
+    <div id="graphExplorer" style="display:none">
+      <div class="treewrap">
+        <div class="picker">
+          <input type="text" id="pickSearch" placeholder="ابحث عن راوٍ…" oninput="fillPicker()">
+          <div class="plist" id="plist"></div>
+        </div>
+        <div class="treepane"><div class="hint2">اسحب للتحريك · بعجلة الفأرة تكبّر · اضغط عقدة للتوسّع</div><svg id="tree"></svg></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 MERGE -->
+  <div class="page" id="p-merge">
+    <div class="toolbar">
+      <span id="mergeBooks" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div class="toolbar">
+      <label class="opt">اسم الناتج <input type="text" id="mergeName" value="merged"></label>
+      <button class="btn" onclick="doMerge()">ادمج المختارة</button>
+    </div>
+    <div id="mergeStats"></div>
+  </div>
+
+  <!-- 4 BIO -->
+  <div class="page" id="p-bio">
+    <div class="toolbar">
+      <input type="file" id="bioFile" accept=".txt">
+      <label class="opt">الاسم <input type="text" id="bioName" value="khoei"></label>
+      <button class="btn" id="bioGo" onclick="doBio()">قطّع النبذات</button>
+    </div>
+    <div id="bioStats"></div>
+    <div id="bioResult"></div>
+  </div>
+
+  <!-- 5 LINK -->
+  <div class="page" id="p-link">
+    <div class="toolbar">
+      <label class="opt">النبذات <select id="linkBio"></select></label>
+      <label class="opt">الشبكة <select id="linkGraph"></select></label>
+      <label class="opt">k <input type="number" id="linkK" value="2" min="1" max="3" style="width:55px"></label>
+      <button class="btn" onclick="doLink()">اربط وقِس</button>
+    </div>
+    <div id="linkResult"></div>
+  </div>
+
+  </div>
+</div>
+
+<script>
+const BASE = location.protocol==="file:" ? "http://localhost:8000" : "";
+const PER=20;
+const TITLES={seg:['تقطيع الحديث','ارفع كتاباً، قطّعه، وراجع السند والمتن لكل حديث'],
+  graph:['شبكة الرواة','شجرة الأساتذة والتلاميذ لكل راوٍ'],
+  merge:['دمج الشبكات','ادمج عدة كتب في شبكة موحّدة'],
+  bio:['كتاب الرجال','قطّع النبذات واستخرج الأساتذة والتلاميذ'],
+  link:['الربط + Table 2','اربط النبذات بالشبكة وقِس تحسّن كشف الحدود']};
+
+function ping(){ fetch(BASE+"/health").then(r=>r.json()).then(()=>{
+  const c=document.getElementById('conn'); c.textContent="● متصل"; c.className="conn ok"; refreshSession();
+}).catch(()=>setTimeout(ping,2000)); }
+ping();
+if(typeof d3==="undefined"){ console.warn("D3 لم تُحمّل — تأكد من الإنترنت"); }
+
+function nav(id,el){
+  document.querySelectorAll('.navitem').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('p-'+id).classList.add('active');
+  document.getElementById('ttl').textContent=TITLES[id][0];
+  document.getElementById('tsub').textContent=TITLES[id][1];
+  refreshSession();
+}
+
+async function refreshSession(){
+  try{
+    const s=await (await fetch(BASE+"/session")).json();
+    const books=Object.keys(s.books),graphs=Object.keys(s.graphs),bios=Object.keys(s.biographies);
+    fill('graphBook',books); fill('linkGraph',graphs); fill('linkBio',bios);
+    document.getElementById('mergeBooks').innerHTML=books.length
+      ? 'اختر الكتب للدمج: '+books.map(b=>`<label class="opt" style="display:inline-flex"><input type="checkbox" class="mb" value="${b}">${b}</label>`).join(' ')
+      : 'لا كتب مقطّعة بعد (قطّع في التبويب ١)';
+  }catch(e){}
+}
+function fill(id,arr){ const s=document.getElementById(id); if(!s)return; const c=s.value;
+  s.innerHTML=arr.map(x=>`<option>${x}</option>`).join(''); if(arr.includes(c))s.value=c; }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ---------- 1 SEGMENT ---------- */
+let segData={clean:[],sus:[],all:[]}, segMode="clean", segPage=0;
+async function doSegment(){
+  const f=document.getElementById('segFile').files[0]; if(!f){alert("اختر ملف");return;}
+  const b=document.getElementById('segGo'); b.disabled=true; b.innerHTML='<span class="spin"></span> جاري…';
+  document.getElementById('segResult').innerHTML='<p class="msg">جاري التقطيع… (أول مرة تحمّل Wojood)</p>';
+  const fd=new FormData(); fd.append("file",f); fd.append("name",document.getElementById('segName').value);
+  fd.append("start_marker",document.getElementById('segMarker').value);
+  fd.append("use_wojood",document.getElementById('segWojood').checked);
+  try{
+    const j=await (await fetch(BASE+"/segment",{method:"POST",body:fd})).json();
+    segData.all=j.hadiths; segData.clean=j.hadiths.filter(h=>!h.suspicious); segData.sus=j.hadiths.filter(h=>h.suspicious);
+    segMode="clean"; segPage=0;
+    document.getElementById('segStats').innerHTML=`<div class="stats">
+      <div class="stat"><div class="num">${j.stats.total_hadiths}</div><div class="lbl">إجمالي</div></div>
+      <div class="stat good"><div class="num">${j.stats.clean}</div><div class="lbl">نظيفة</div></div>
+      <div class="stat warn"><div class="num">${j.stats.suspicious}</div><div class="lbl">مشبوهة</div></div>
+      <div class="stat"><div class="num">${j.stats.wojood?'✓':'✗'}</div><div class="lbl">Wojood</div></div></div>`;
+    document.getElementById('bookPrev').innerHTML=`<div class="sec">نص الكتاب (أول 3000 حرف):</div><div class="bookprev">${esc(j.book_preview)}</div>`;
+    renderSeg(); refreshSession();
+  }catch(e){ document.getElementById('segResult').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
+  finally{ b.disabled=false; b.textContent="قطّع الأحاديث"; }
+}
+function segTab(m){ segMode=m; segPage=0; renderSeg(); }
+function renderSeg(){
+  const arr=segData[segMode]||[], start=segPage*PER, slice=arr.slice(start,start+PER);
+  let html=`<div class="subtabs">
+    <div class="subtab clean ${segMode==='clean'?'active':''}" onclick="segTab('clean')">نظيفة (${segData.clean.length})</div>
+    <div class="subtab sus ${segMode==='sus'?'active':''}" onclick="segTab('sus')">مشبوهة (${segData.sus.length})</div>
+    <div class="subtab ${segMode==='all'?'active':''}" onclick="segTab('all')">الكل (${segData.all.length})</div></div>`;
+  if(!slice.length){ document.getElementById('segResult').innerHTML=html+'<p class="msg">لا عناصر.</p>'; return; }
+  html+=slice.map((h,i)=>{
+    const chain=h.narrators.map((n,j)=>{const ras=h.narrators_full&&h.narrators_full[j]&&h.narrators_full[j].is_rasoul;
+      return `<span class="narr${ras?' rasoul':''}">${n}</span>`+(j<h.narrators.length-1?'<span class="arrow">←</span>':'');}).join('');
+    return `<div class="hadith ${h.suspicious?'bad':'clean'}">
+      <div class="hnum">التسلسل #${start+i+1} ${h.number!==-1?`<span class="badge num">رقم ${h.number}</span>`:`<span class="badge bad">بلا رقم</span>`}<span class="badge">${h.narrator_count} رواة</span></div>
+      <div class="sec">النص الأصلي:</div><div class="orig">${esc(h.original||'—')}</div>
+      <div class="sec">السند المستخرج:</div><div class="chain">${chain}</div>
+      <div class="sec">المتن المستخرج:</div><div class="matn">${esc(h.matn||'—')}</div></div>`;
+  }).join('');
+  const pages=Math.ceil(arr.length/PER);
+  html+=`<div class="pager"><button onclick="segGoPage(-1)" ${segPage===0?'disabled':''}>◀ السابق</button>
+    <span>صفحة ${segPage+1} من ${pages}</span><button onclick="segGoPage(1)" ${segPage>=pages-1?'disabled':''}>التالي ▶</button></div>`;
+  document.getElementById('segResult').innerHTML=html;
+}
+function segGoPage(d){ segPage+=d; renderSeg(); }
+
+/* ---------- 2 GRAPH + D3 TREE ---------- */
+let GP={}, GPsorted=[], curRoot=null;
+async function doBuildGraph(){
+  const name=document.getElementById('graphBook').value; if(!name){alert("قطّع كتاباً أولاً");return;}
+  document.getElementById('graphStats').innerHTML='<p class="msg"><span class="spin"></span> جاري البناء…</p>';
+  document.getElementById('graphExplorer').style.display='none';
+  try{
+    const j=await (await fetch(BASE+"/build-graph",{method:"POST",headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,threshold:parseFloat(document.getElementById('graphTh').value)})})).json();
+    document.getElementById('graphStats').innerHTML=`<div class="stats">
+      <div class="stat"><div class="num">${j.stats.persons}</div><div class="lbl">رواة</div></div>
+      <div class="stat"><div class="num">${j.stats.edges}</div><div class="lbl">علاقات</div></div>
+      <div class="stat"><div class="num">${j.stats.merged}</div><div class="lbl">مدموجون</div></div>
+      <div class="stat"><div class="num">${j.stats.max_rank}</div><div class="lbl">أجيال</div></div></div>`;
+    GP={}; j.persons.forEach(p=>GP[p.id]=p);
+    GPsorted=j.persons.slice().sort((a,b)=>b.occurrences-a.occurrences);
+    document.getElementById('graphExplorer').style.display='block';
+    fillPicker();
+    if(GPsorted.length) drawTree(GPsorted[0].id);
+    refreshSession();
+  }catch(e){ document.getElementById('graphStats').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
+}
+
+function fillPicker(){
+  const q=document.getElementById('pickSearch').value.trim();
+  let arr=GPsorted; if(q) arr=arr.filter(p=>p.primary_name.includes(q));
+  document.getElementById('plist').innerHTML=arr.slice(0,200).map(p=>
+    `<div class="prow ${curRoot==p.id?'sel':''}" onclick="drawTree(${p.id})"><span>${p.primary_name}</span><span class="oc">${p.occurrences}×</span></div>`).join('');
+}
+
+function drawTree(rootId){
+  curRoot=rootId; fillPicker();
+  const root=GP[rootId]; if(!root) return;
+  // build a hierarchy: subject in the middle, teachers as one branch (up), students (down).
+  // We render TWO trees sharing the root: teachers above, students below.
+  const teachers=(root.parents||[]).map(x=>GP[x]).filter(Boolean).slice(0,10);
+  const students=(root.children||[]).map(x=>GP[x]).filter(Boolean).slice(0,10);
+  // second level for students (their students) to give a real tree feel
+  function kids(p,depth){
+    if(depth<=0) return [];
+    return (p.children||[]).map(x=>GP[x]).filter(Boolean).slice(0,4)
+      .map(c=>({name:c.primary_name,id:c.id,occ:c.occurrences,children:kids(c,depth-1)}));
+  }
+  const studentTree={name:root.primary_name,id:root.id,occ:root.occurrences,
+    children:students.map(s=>({name:s.primary_name,id:s.id,occ:s.occurrences,children:kids(s,1)}))};
+  const teacherTree={name:root.primary_name,id:root.id,occ:root.occurrences,
+    children:teachers.map(t=>({name:t.primary_name,id:t.id,occ:t.occurrences,
+      children:(t.parents||[]).map(x=>GP[x]).filter(Boolean).slice(0,3).map(g=>({name:g.primary_name,id:g.id,occ:g.occurrences}))}))};
+
+  const svg=d3.select("#tree"); svg.selectAll("*").remove();
+  const pane=document.querySelector('.treepane');
+  const W=pane.clientWidth, H=pane.clientHeight;
+  const g=svg.append("g");
+  const zoom=d3.zoom().scaleExtent([0.3,2.5]).on("zoom",ev=>g.attr("transform",ev.transform));
+  svg.call(zoom);
+
+  const midY=H/2;
+  // student tree (grows downward)
+  layoutTree(studentTree, g, W/2, midY, 1, H);
+  // teacher tree (grows upward) — mirror y
+  layoutTree(teacherTree, g, W/2, midY, -1, H, true);
+
+  // center root node styling handled inside layoutTree (depth 0)
+  svg.call(zoom.transform, d3.zoomIdentity.translate(0,0).scale(0.85));
+}
+
+function layoutTree(data,g,cx,cy,dir,H,isTeacher){
+  const rootH=d3.hierarchy(data);
+  const levels=(rootH.height||1);
+  const vgap=Math.min(130,(H/2-40)/(levels||1));
+  const tree=d3.tree().nodeSize([120,vgap]);
+  tree(rootH);
+  // rootH.x is horizontal, rootH.y vertical (depth). shift so root at (cx,cy)
+  const ox=cx - rootH.x, oy=cy;
+  // links
+  g.selectAll(null).data(rootH.links().filter(l=>!(l.source.depth===0&&isTeacher&&false)))
+    .enter().append("path")
+    .attr("d",d=>{
+      const sx=d.source.x+ox, sy=oy+dir*d.source.y, tx=d.target.x+ox, ty=oy+dir*d.target.y;
+      return `M${sx},${sy} C${sx},${(sy+ty)/2} ${tx},${(sy+ty)/2} ${tx},${ty}`;
+    })
+    .attr("fill","none").attr("stroke","#c9bfa6").attr("stroke-width",1.5);
+  // nodes (skip duplicate root for teacher tree)
+  const nodes=rootH.descendants().filter(d=>!(isTeacher&&d.depth===0));
+  const ng=g.selectAll(null).data(nodes).enter().append("g")
+    .attr("class","node-r")
+    .attr("transform",d=>`translate(${d.x+ox},${oy+dir*d.y})`);
+  ng.append("rect")
+    .attr("x",d=>-boxW(d)/2).attr("y",-16).attr("width",d=>boxW(d)).attr("height",32).attr("rx",7)
+    .attr("fill",d=>d.depth===0?"#7a5a2c":(dir<0?"#efe0cb":"#e3ece7"))
+    .attr("stroke",d=>d.depth===0?"#5a4320":"#b8ad88")
+    .on("click",(e,d)=>{ if(d.data.id!=null&&GP[d.data.id]) drawTree(d.data.id); });
+  ng.append("text").attr("text-anchor","middle").attr("dy","5")
+    .attr("fill",d=>d.depth===0?"#fff":"#22201b")
+    .text(d=>short(d.data.name));
+  // root center marker for the shared subject (draw once from student tree)
+  if(!isTeacher){
+    g.append("text").attr("x",cx).attr("y",cy-30).attr("text-anchor","middle")
+      .attr("fill","#8a5a24").attr("font-size","11").text("الأساتذة ↑");
+    g.append("text").attr("x",cx).attr("y",cy+40).attr("text-anchor","middle")
+      .attr("fill","#3d6b5c").attr("font-size","11").text("↓ التلاميذ");
+  }
+}
+function short(s){ return s.length>16?s.slice(0,15)+'…':s; }
+function boxW(d){ return Math.max(70, short(d.data.name).length*9+18); }
+
+/* ---------- 3 MERGE ---------- */
+async function doMerge(){
+  const names=[...document.querySelectorAll('.mb:checked')].map(c=>c.value);
+  if(names.length<2){alert("اختر كتابين على الأقل");return;}
+  document.getElementById('mergeStats').innerHTML='<p class="msg"><span class="spin"></span> جاري الدمج…</p>';
+  try{
+    const j=await (await fetch(BASE+"/merge-graphs",{method:"POST",headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({names,out_name:document.getElementById('mergeName').value})})).json();
+    document.getElementById('mergeStats').innerHTML=`<div class="box">دمج: <b>${j.merged_books.join(' + ')}</b></div>
+      <div class="stats"><div class="stat"><div class="num">${j.stats.persons}</div><div class="lbl">رواة موحّدون</div></div>
+      <div class="stat"><div class="num">${j.stats.edges}</div><div class="lbl">علاقات</div></div>
+      <div class="stat"><div class="num">${j.stats.merged}</div><div class="lbl">مدموجون</div></div></div>`;
+    refreshSession();
+  }catch(e){ document.getElementById('mergeStats').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
+}
+
+/* ---------- 4 BIO ---------- */
+async function doBio(){
+  const f=document.getElementById('bioFile').files[0]; if(!f){alert("اختر ملف");return;}
+  const b=document.getElementById('bioGo'); b.disabled=true; b.innerHTML='<span class="spin"></span> جاري…';
+  const fd=new FormData(); fd.append("file",f); fd.append("name",document.getElementById('bioName').value);
+  try{
+    const j=await (await fetch(BASE+"/segment-biography",{method:"POST",body:fd})).json();
+    document.getElementById('bioStats').innerHTML=`<div class="stats">
+      <div class="stat"><div class="num">${j.stats.entries}</div><div class="lbl">نبذات</div></div>
+      <div class="stat good"><div class="num">${j.stats.with_relations}</div><div class="lbl">بأساتذة/تلاميذ</div></div></div>`;
+    document.getElementById('bioResult').innerHTML=j.entries.filter(e=>e.teachers.length||e.students.length).slice(0,30).map(e=>
+      `<div class="box"><b>#${e.number} ${e.subject}</b>
+        <div class="sec">الأساتذة (روى عن):</div><div>${e.teachers.join('، ')||'—'}</div>
+        <div class="sec">التلاميذ (روى عنه):</div><div>${e.students.join('، ')||'—'}</div></div>`).join('');
+    refreshSession();
+  }catch(e){ document.getElementById('bioResult').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
+  finally{ b.disabled=false; b.textContent="قطّع النبذات"; }
+}
+
+/* ---------- 5 LINK ---------- */
+async function doLink(){
+  const bio=document.getElementById('linkBio').value,graph=document.getElementById('linkGraph').value;
+  if(!bio||!graph){alert("لازم نبذات وgraph");return;}
+  document.getElementById('linkResult').innerHTML='<p class="msg"><span class="spin"></span> جاري الربط…</p>';
+  try{
+    const j=await (await fetch(BASE+"/link-biography",{method:"POST",headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({bio_name:bio,graph_name:graph,k:parseInt(document.getElementById('linkK').value)})})).json();
+    document.getElementById('linkResult').innerHTML=`<div class="stats">
+        <div class="stat"><div class="num">${j.gold_entries}</div><div class="lbl">نبذات بالـ graph</div></div>
+        <div class="stat"><div class="num">${j.neighbours_in_graph}</div><div class="lbl">جيران بالـ graph</div></div>
+        <div class="stat"><div class="num">k=${j.k}</div><div class="lbl">عمق</div></div></div>
+      <div class="t2">
+        <div class="cell ng"><div class="lbl">بدون graph — boundary recall</div><div class="v">${(j.no_graph_recall*100).toFixed(0)}%</div></div>
+        <div class="cell wg"><div class="lbl">مع graph — boundary recall</div><div class="v">${(j.with_graph_recall*100).toFixed(0)}%</div></div></div>
+      <p class="sec" style="margin-top:16px">القفزة: ${(j.no_graph_recall*100).toFixed(0)}% ← ${(j.with_graph_recall*100).toFixed(0)}% (الورقة: 41% ← 93%). النتيجة تعتمد على k.</p>`;
+  }catch(e){ document.getElementById('linkResult').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
+}
+</script>
+</body>
+</html>

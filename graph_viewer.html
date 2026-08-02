@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>شبكة رواة الحديث — عارض النتائج</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+<style>
+  :root{
+    --ink:#1c1a17; --paper:#f6f1e7; --paper2:#efe8d8; --line:#d8cdb5;
+    --accent:#7a5c2e; --accent2:#3d6b5c; --rasoul:#9c6b2f; --muted:#8a8272;
+    --card:#fffdf8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:"Noto Naskh Arabic","Amiri","Segoe UI",serif;
+    line-height:1.7;
+  }
+  header{
+    padding:28px 32px 20px; border-bottom:2px solid var(--line);
+    background:linear-gradient(180deg,var(--paper2),var(--paper));
+  }
+  header h1{font-size:26px;font-weight:700;letter-spacing:.3px}
+  header p{color:var(--muted);font-size:14px;margin-top:4px}
+  .toolbar{
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+    padding:14px 32px;border-bottom:1px solid var(--line);background:var(--card);
+  }
+  .toolbar label{font-size:13px;color:var(--muted)}
+  .btn{
+    background:var(--accent);color:#fff;border:none;border-radius:6px;
+    padding:8px 16px;font-size:14px;cursor:pointer;font-family:inherit;
+  }
+  .btn:hover{opacity:.9}
+  .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  .tabs{display:flex;gap:4px;padding:0 32px;background:var(--card);border-bottom:1px solid var(--line)}
+  .tab{
+    padding:12px 20px;cursor:pointer;font-size:15px;color:var(--muted);
+    border-bottom:3px solid transparent;
+  }
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+  .wrap{display:grid;grid-template-columns:1fr 340px;gap:0;height:calc(100vh - 200px)}
+  #net{width:100%;height:100%;background:var(--paper)}
+  .side{
+    background:var(--card);border-right:1px solid var(--line);
+    padding:22px;overflow-y:auto;
+  }
+  .side h2{font-size:17px;margin-bottom:12px;color:var(--accent)}
+  .empty{color:var(--muted);font-size:14px;line-height:1.9}
+  .pill{
+    display:inline-block;font-size:12px;padding:2px 10px;border-radius:20px;
+    background:var(--paper2);color:var(--ink);margin:2px;border:1px solid var(--line);
+  }
+  .kv{margin:14px 0;padding:12px;background:var(--paper);border-radius:8px;border:1px solid var(--line)}
+  .kv .name{font-size:19px;font-weight:700;margin-bottom:6px}
+  .kv .meta{font-size:13px;color:var(--muted)}
+  .rel{margin-top:14px}
+  .rel h3{font-size:14px;color:var(--accent2);margin-bottom:6px;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .rel .item{font-size:14px;padding:5px 8px;border-radius:6px;cursor:pointer}
+  .rel .item:hover{background:var(--paper2)}
+  .legend{display:flex;gap:18px;padding:12px 32px;font-size:13px;color:var(--muted);background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+  /* hadith view */
+  #hadithView{padding:26px 32px;overflow-y:auto;height:calc(100vh - 200px);display:none}
+  .hadith{
+    background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:20px;margin-bottom:20px;max-width:900px;
+  }
+  .hadith .hnum{font-size:13px;color:var(--accent);font-weight:700;margin-bottom:10px}
+  .hadith .loc{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .chain{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px}
+  .narr{
+    background:var(--paper2);border:1px solid var(--line);border-radius:6px;
+    padding:6px 12px;font-size:14px;
+  }
+  .arrow{color:var(--accent);font-size:18px}
+  .matn{
+    background:var(--paper);border-right:3px solid var(--accent2);
+    padding:12px 16px;border-radius:0 8px 8px 0;font-size:15px;line-height:2;
+  }
+  .matn .lbl{font-size:12px;color:var(--accent2);font-weight:700;display:block;margin-bottom:6px}
+  .sec-lbl{font-size:12px;color:var(--muted);margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>شبكة رواة الحديث</h1>
+  <p>عارض تفاعلي للسند والمتن والرواة والعلاقات — مبني على مخرجات النظام (graph.json / hadiths.json)</p>
+</header>
+
+<div class="toolbar">
+  <button class="btn" onclick="document.getElementById('gf').click()">تحميل graph.json كامل</button>
+  <input id="gf" type="file" accept=".json" style="display:none" onchange="loadGraph(event)">
+  <button class="btn ghost" onclick="document.getElementById('hf').click()">تحميل hadiths.json</button>
+  <input id="hf" type="file" accept=".json" style="display:none" onchange="loadHadiths(event)">
+  <label id="status">معروض حالياً: عيّنة تجريبية (14 راوٍ حول «أبي جعفر»)</label>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('graph',this)">الشبكة (الرواة والعلاقات)</div>
+  <div class="tab" onclick="showTab('hadith',this)">الأحاديث (سند + متن)</div>
+</div>
+
+<div class="legend" id="legend">
+  <span><i class="dot" style="background:#9c6b2f"></i> رسول/إمام (rank عالٍ)</span>
+  <span><i class="dot" style="background:#7a5c2e"></i> راوٍ</span>
+  <span><i class="dot" style="background:#3d6b5c"></i> المحدّد</span>
+  <span>السهم: من الأستاذ ← إلى التلميذ (روى عن)</span>
+</div>
+
+<div class="wrap" id="graphView">
+  <div id="net"></div>
+  <div class="side" id="side">
+    <h2>تفاصيل الراوي</h2>
+    <p class="empty">اضغط على أي عقدة في الشبكة لعرض اسمها، جيلها، عدد مرّات ورودها، وأساتذتها وتلاميذها.</p>
+  </div>
+</div>
+
+<div id="hadithView"></div>
+
+<script>
+const DEMO = {"persons": [{"id": 64, "name": "مولا لبني شيبان", "rank": 2, "occurrences": 1, "parents": [7], "children": []}, {"id": 2, "name": "محمد بن يحيا بن درياب", "rank": 1, "occurrences": 8, "parents": [3, 17], "children": []}, {"id": 3, "name": "احمد بن محمد بن عبد الله بن مروان الانباري", "rank": 1, "occurrences": 488, "parents": [17, 28, 30], "children": [2]}, {"id": 5, "name": "العلاء بن رزين", "rank": 2, "occurrences": 9, "parents": [6], "children": []}, {"id": 6, "name": "محمد بن مسلم", "rank": 2, "occurrences": 41, "parents": [7, 28], "children": [5, 30, 271]}, {"id": 7, "name": "ابي جعفر", "rank": 1, "occurrences": 159, "parents": [8, 28], "children": [6, 13, 17, 28, 31, 64]}, {"id": 8, "name": "عليه السلام", "rank": 0, "occurrences": 1, "parents": [], "children": [7]}, {"id": 12, "name": "مفضل بن صالح", "rank": 3, "occurrences": 2, "parents": [13], "children": []}, {"id": 13, "name": "سعد بن طريف", "rank": 2, "occurrences": 2, "parents": [7], "children": [12, 271]}, {"id": 271, "name": "منصور ابن يونس", "rank": 2, "occurrences": 15, "parents": [6, 13, 31], "children": []}, {"id": 17, "name": "بعض اصحابنا", "rank": 1, "occurrences": 52, "parents": [7, 28, 30], "children": [2, 3, 28]}, {"id": 28, "name": "عبد الله بن الحكم الارمني", "rank": 1, "occurrences": 308, "parents": [7, 17, 30, 31], "children": [3, 6, 7, 17, 30]}, {"id": 30, "name": "محمد بن سنان", "rank": 1, "occurrences": 57, "parents": [6, 28, 31], "children": [3, 17, 28]}, {"id": 31, "name": "ابي الجارود جميعا", "rank": 2, "occurrences": 13, "parents": [7], "children": [28, 30, 271]}], "hadiths": [{"number": 1, "kitab": "كتاب العقل والجهل 1 -", "bab": "", "narrators": ["ابو جعفر محمد بن يعقوب", "عده من اصحابنا", "محمد بن يحيا العطار", "احمد بن محمد", "الحسن بن محبوب", "العلاء بن رزين", "محمد بن مسلم", "ابي جعفر", "عليه السلام"], "matn": "قال: لما خلق الله العقل استنطقه ثم قال له: اقبل فاقبل ثم قال له: ادبر فادبر ثم قال: وعزتي وجلالي ما خلقت خلقا هو احب الي منك ولا اكملتك الا فيمن احب، اما اني اياك امر، واياك انها واياك اعاقب، واياك اثيب."}, {"number": 2, "kitab": "كتاب العقل والجهل 1 -", "bab": "", "narrators": ["علي بن محمد", "سهل بن زياد", "عمرو بن عثمان", "مفضل بن صالح", "سعد بن طريف", "الاصبغ بن", "عليه السلام"], "matn": "قال: هبط جبرءيل علا ادم عليه السلام فقال: يا ادم اني امرت ان اخيرك واحده من ثلاث فاخترها ودع اثنتين فقال له ادم: يا جبرءيل وما الثلاث؟ فقال: العقل والحياء والدين، فقال ادم: اني قد اخترت العقل فقال جبرءيل للحياء والدين: ا"}, {"number": 3, "kitab": "كتاب العقل والجهل 1 -", "bab": "", "narrators": ["احمد بن ادريس", "محمد بن عبد الجبار", "بعض اصحابنا", "ابي عبد الله", "عليه السلام"], "matn": "قال: قلت له: ما العقل؟ قال: ما عبد به الرحمن واكتسب به الجنان قال: قلت: فالذي كان في معاويه؟ فقال: تلك النكراء! تلك الشيطنه، وهي شبيهه بالعقل، وليست بالعقل."}]};
+let DATA = DEMO;
+
+function rankColor(rank, maxRank){
+  // higher rank (closer to imam) => warmer/darker
+  if(rank >= maxRank-0) return '#9c6b2f';
+  return '#7a5c2e';
+}
+
+let network=null, nodesDS=null, edgesDS=null, personById={};
+
+function buildGraph(){
+  const persons = DATA.persons;
+  personById = {}; persons.forEach(p=>personById[p.id]=p);
+  const maxRank = Math.max(...persons.map(p=>p.rank||0));
+  const nodes = persons.map(p=>({
+    id:p.id,
+    label:p.name,
+    value:(p.occurrences||1),
+    color:{background:rankColor(p.rank,maxRank),border:'#5a431f'},
+    font:{color:'#1c1a17',face:'Noto Naskh Arabic,serif',size:15},
+    shape:'dot'
+  }));
+  const edges=[];
+  persons.forEach(p=>{
+    (p.children||[]).forEach(c=>{
+      if(personById[c]) edges.push({from:p.id,to:c,arrows:'to',color:{color:'#c9bfa6'}});
+    });
+  });
+  nodesDS=new vis.DataSet(nodes); edgesDS=new vis.DataSet(edges);
+  const container=document.getElementById('net');
+  network=new vis.Network(container,{nodes:nodesDS,edges:edgesDS},{
+    physics:{stabilization:true,barnesHut:{gravitationalConstant:-8000,springLength:140}},
+    nodes:{scaling:{min:10,max:40}},
+    interaction:{hover:true}
+  });
+  network.on('click',params=>{
+    if(params.nodes.length){ showPerson(params.nodes[0]); }
+  });
+}
+
+function showPerson(id){
+  const p=personById[id]; if(!p) return;
+  const side=document.getElementById('side');
+  const teachers=(p.parents||[]).map(x=>personById[x]).filter(Boolean);
+  const students=(p.children||[]).map(x=>personById[x]).filter(Boolean);
+  let html=`<h2>تفاصيل الراوي</h2>
+    <div class="kv">
+      <div class="name">${p.name}</div>
+      <div class="meta">الجيل (rank): ${p.rank} &nbsp;·&nbsp; ورد ${p.occurrences} مرّة &nbsp;·&nbsp; المعرّف: ${p.id}</div>
+    </div>`;
+  html+=`<div class="rel"><h3>الأساتذة — روى عنهم (${teachers.length})</h3>`;
+  html+= teachers.length? teachers.map(t=>`<div class="item" onclick="focusNode(${t.id})">↑ ${t.name}</div>`).join('') : '<p class="empty">لا يوجد ضمن العيّنة</p>';
+  html+=`</div>`;
+  html+=`<div class="rel"><h3>التلاميذ — روَوا عنه (${students.length})</h3>`;
+  html+= students.length? students.map(s=>`<div class="item" onclick="focusNode(${s.id})">↓ ${s.name}</div>`).join('') : '<p class="empty">لا يوجد ضمن العيّنة</p>';
+  html+=`</div>`;
+  side.innerHTML=html;
+  nodesDS.update(DATA.persons.map(pp=>({id:pp.id,color:{background:pp.id==id?'#3d6b5c':rankColor(pp.rank,99),border:'#5a431f'}})));
+}
+function focusNode(id){ network.focus(id,{scale:1.2,animation:true}); showPerson(id); }
+
+function renderHadiths(){
+  const v=document.getElementById('hadithView');
+  if(!DATA.hadiths||!DATA.hadiths.length){ v.innerHTML='<p class="empty">لا توجد أحاديث في البيانات المحمّلة. حمّل hadiths.json لعرضها.</p>'; return; }
+  v.innerHTML='<p class="sec-lbl">كل حديث: سلسلة السند (من الأعلى للأدنى) ثم المتن.</p>'+
+    DATA.hadiths.map(h=>{
+      const chain=h.narrators.map((n,i)=>
+        `<span class="narr">${n}</span>`+(i<h.narrators.length-1?'<span class="arrow">←</span>':'')
+      ).join('');
+      return `<div class="hadith">
+        <div class="hnum">حديث رقم ${h.number}</div>
+        ${(h.kitab||h.bab)?`<div class="loc">${h.kitab||''} ${h.bab?'— '+h.bab:''}</div>`:''}
+        <div class="sec-lbl">السند (${h.narrators.length} رواة):</div>
+        <div class="chain">${chain}</div>
+        <div class="matn"><span class="lbl">المتن</span>${h.matn}…</div>
+      </div>`;
+    }).join('');
+}
+
+function showTab(which,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  const g=document.getElementById('graphView'), h=document.getElementById('hadithView'), lg=document.getElementById('legend');
+  if(which==='graph'){ g.style.display='grid'; h.style.display='none'; lg.style.display='flex'; }
+  else{ g.style.display='none'; h.style.display='block'; lg.style.display='none'; renderHadiths(); }
+}
+
+function loadGraph(e){
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const j=JSON.parse(r.result);
+      const persons=(j.persons||j).map(p=>({
+        id:p.id,name:p.primary_name||p.name,rank:p.rank||0,
+        occurrences:p.occurrences||1,parents:p.parents||[],children:p.children||[]
+      }));
+      DATA={persons:persons,hadiths:DATA.hadiths};
+      document.getElementById('status').textContent=`معروض: graph كامل (${persons.length} راوٍ)`;
+      buildGraph();
+    }catch(err){ alert('ملف غير صالح: '+err.message); }
+  };
+  r.readAsText(f);
+}
+function loadHadiths(e){
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const j=JSON.parse(r.result);
+      DATA.hadiths=j.slice(0,50).map(h=>({
+        number:h.number,kitab:h.kitab||'',bab:h.bab||'',
+        narrators:(h.sanad?.narrators||[]).map(n=>n.name),
+        matn:((h.matn&&h.matn.text)?h.matn.text:h.matn||'').slice(0,220)
+      }));
+      alert('تم تحميل '+DATA.hadiths.length+' حديث (أول 50). افتح تبويب الأحاديث.');
+    }catch(err){ alert('ملف غير صالح: '+err.message); }
+  };
+  r.readAsText(f);
+}
+
+buildGraph();
+</script>
+</body>
+</html>

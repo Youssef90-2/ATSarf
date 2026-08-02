@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام تقطيع الحديث — واجهة الويب</title>
+<style>
+  :root{--ink:#211d17;--paper:#f7f2e8;--card:#fffdf8;--line:#ddd2ba;
+    --accent:#6f5327;--green:#3d6b5c;--red:#a5432f;--amber:#b07c1d;--muted:#8a8272}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:"Noto Naskh Arabic","Amiri","Segoe UI",serif;line-height:1.7}
+  header{padding:22px 30px;border-bottom:2px solid var(--line);
+    background:linear-gradient(180deg,#efe8d8,var(--paper))}
+  header h1{font-size:24px} header p{color:var(--muted);font-size:13px;margin-top:3px}
+  .conn{font-size:12px;padding:3px 10px;border-radius:20px;margin-right:8px}
+  .conn.ok{background:#e7f0eb;color:var(--green)} .conn.off{background:#f7e9e5;color:var(--red)}
+  .panel{padding:16px 30px;background:var(--card);border-bottom:1px solid var(--line);
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:6px;
+    padding:9px 16px;font-size:14px;cursor:pointer;font-family:inherit}
+  .btn:disabled{opacity:.5;cursor:default}
+  label.opt{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px}
+  input[type=text],input[type=number]{padding:7px 10px;border:1px solid var(--line);
+    border-radius:6px;font-family:inherit;font-size:13px;background:var(--paper)}
+  input[type=text]{width:150px} input[type=number]{width:60px}
+  /* view switcher */
+  .views{display:flex;gap:0;padding:0 30px;background:var(--card);border-bottom:1px solid var(--line)}
+  .vtab{padding:12px 22px;cursor:pointer;font-size:14px;color:var(--muted);
+    border-bottom:3px solid transparent;display:flex;align-items:center;gap:7px}
+  .vtab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+  .vtab .cnt{font-size:12px;background:var(--paper);border-radius:20px;padding:1px 9px;border:1px solid var(--line)}
+  .vtab.clean.active{color:var(--green);border-bottom-color:var(--green)}
+  .vtab.sus.active{color:var(--red);border-bottom-color:var(--red)}
+  .stats{display:flex;gap:24px;padding:14px 30px;background:var(--paper);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .stat{text-align:center} .stat .num{font-size:22px;font-weight:700;color:var(--accent)}
+  .stat.good .num{color:var(--green)} .stat.warn .num{color:var(--red)} .stat .lbl{font-size:12px;color:var(--muted)}
+  .note{padding:10px 30px;font-size:13px;background:#fbf6ea;border-bottom:1px solid var(--line)}
+  .note.sus{background:#f9efec;color:var(--red)}
+  .list{padding:20px 30px;max-width:960px}
+  .msg{color:var(--muted);text-align:center;padding:50px;font-size:15px}
+  .hadith{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;margin-bottom:14px}
+  .hadith.bad{border-right:4px solid var(--red)}
+  .hadith.clean{border-right:4px solid var(--green)}
+  .hrow{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:8px;flex-wrap:wrap}
+  .seq{font-size:13px;color:var(--muted)} .seq b{color:var(--accent)}
+  .badge{font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--line)}
+  .badge.num{background:#eef3f0;color:var(--green)} .badge.bad{background:#f7e9e5;color:var(--red)}
+  .sec{font-size:12px;color:var(--muted);margin:8px 0 5px}
+  .chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .narr{background:#efe8d8;border:1px solid var(--line);border-radius:6px;padding:5px 11px;font-size:14px}
+  .narr.rasoul{background:#f3e6d0;border-color:var(--amber);color:var(--accent);font-weight:700}
+  .arrow{color:var(--accent)}
+  .matn{background:var(--paper);border-right:3px solid var(--green);
+    padding:10px 14px;border-radius:0 8px 8px 0;font-size:14px;line-height:1.9;margin-top:5px}
+  .pager{display:flex;gap:8px;justify-content:center;padding:18px;align-items:center}
+  .pager button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 14px;cursor:pointer;font-family:inherit}
+  .pager button:disabled{opacity:.4}
+  .search{margin-bottom:14px}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:middle}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>نظام تقطيع الحديث <span id="conn" class="conn off">غير متصل</span></h1>
+  <p>ارفع كتاباً، اضغط «قطّع»، وشاهد السند والمتن — النظيف والمشبوه مفصولين</p>
+</header>
+
+<div class="panel">
+  <input type="file" id="file" accept=".txt">
+  <button class="btn" id="go" onclick="run()">قطّع الأحاديث</button>
+  <label class="opt">start marker <input type="text" id="marker" placeholder="كتاب العقل"></label>
+  <label class="opt">narr-min <input type="number" id="narrmin" value="3" min="1"></label>
+  <label class="opt"><input type="checkbox" id="wojood" checked> Wojood</label>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="views" id="views" style="display:none">
+  <div class="vtab clean active" data-v="clean" onclick="setView('clean',this)">
+    الأحاديث النظيفة <span class="cnt" id="cntClean">0</span></div>
+  <div class="vtab sus" data-v="sus" onclick="setView('sus',this)">
+    المشبوهة <span class="cnt" id="cntSus">0</span></div>
+  <div class="vtab" data-v="all" onclick="setView('all',this)">
+    الكل <span class="cnt" id="cntAll">0</span></div>
+</div>
+
+<div class="note" id="note" style="display:none"></div>
+<div class="list" id="list"><p class="msg">اختر ملف <b>.txt</b> ثم اضغط «قطّع الأحاديث».</p></div>
+<div class="pager" id="pager"></div>
+
+<script>
+const API="http://localhost:8000";
+let HAD=[], view=[], page=0, per=25, mode="clean";
+
+fetch(API+"/health").then(r=>r.json()).then(()=>{
+  const c=document.getElementById('conn'); c.textContent="متصل"; c.className="conn ok";
+}).catch(()=>{});
+
+// a hadith is "clean" if it has a real book number AND enough narrators
+function isClean(h){ return h.number!==-1 && !h.suspicious; }
+
+async function run(){
+  const f=document.getElementById('file').files[0];
+  if(!f){ alert("اختر ملف أولاً"); return; }
+  const go=document.getElementById('go');
+  go.disabled=true; go.innerHTML='<span class="spin"></span> جاري التقطيع…';
+  document.getElementById('list').innerHTML='<p class="msg">جاري التقطيع… (أول مرة قد تأخذ دقائق لتحميل Wojood)</p>';
+  const fd=new FormData();
+  fd.append("file",f);
+  fd.append("start_marker",document.getElementById('marker').value);
+  fd.append("narr_min",document.getElementById('narrmin').value);
+  fd.append("use_wojood",document.getElementById('wojood').checked);
+  try{
+    const r=await fetch(API+"/segment",{method:"POST",body:fd});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j=await r.json();
+    HAD=j.hadiths; page=0; mode="clean";
+    document.querySelectorAll('.vtab').forEach(t=>t.classList.toggle('active',t.dataset.v==='clean'));
+    showStats(j.stats); document.getElementById('views').style.display='flex';
+    render();
+  }catch(e){
+    document.getElementById('list').innerHTML='<p class="msg" style="color:#a5432f">خطأ في الاتصال بالـ backend: '+e.message+'<br>تأكد أن الخادم يعمل</p>';
+  }finally{ go.disabled=false; go.textContent="قطّع الأحاديث"; }
+}
+
+function showStats(s){
+  const clean=HAD.filter(isClean).length, sus=HAD.length-clean;
+  document.getElementById('stats').innerHTML=`
+    <div class="stat"><div class="num">${s.total_hadiths}</div><div class="lbl">إجمالي المخرجات</div></div>
+    <div class="stat good"><div class="num">${clean}</div><div class="lbl">نظيفة (مرقّمة)</div></div>
+    <div class="stat warn"><div class="num">${sus}</div><div class="lbl">مشبوهة</div></div>
+    <div class="stat"><div class="num">${s.wojood?'✓':'✗'}</div><div class="lbl">Wojood</div></div>`;
+  document.getElementById('cntClean').textContent=clean;
+  document.getElementById('cntSus').textContent=sus;
+  document.getElementById('cntAll').textContent=HAD.length;
+}
+
+function setView(m,el){
+  mode=m; page=0;
+  document.querySelectorAll('.vtab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
+
+function render(){
+  const note=document.getElementById('note');
+  if(mode==='clean'){ view=HAD.filter(isClean);
+    note.style.display='block'; note.className='note';
+    note.innerHTML='هذه هي المخرجات الحقيقية للنظام: أحاديث لها رقم في الكتاب وسند مكتمل. <b>قيّم النظام من هنا.</b>'; }
+  else if(mode==='sus'){ view=HAD.filter(h=>!isClean(h));
+    note.style.display='block'; note.className='note sus';
+    note.innerHTML='مخرجات مشبوهة (بلا رقم أو سند قصير): غالباً مقدمة أو متن تسرّب. <b>يُفلتر معظمها ولا يدخل الرسم البياني — لا تُقيّم النظام من هنا.</b>'; }
+  else { view=HAD; note.style.display='none'; }
+
+  const start=page*per, slice=view.slice(start,start+per);
+  const list=document.getElementById('list');
+  if(!HAD.length){ list.innerHTML='<p class="msg">لا أحاديث.</p>'; document.getElementById('pager').innerHTML=''; return; }
+  if(!slice.length){ list.innerHTML='<p class="msg">لا عناصر في هذا العرض.</p>'; document.getElementById('pager').innerHTML=''; return; }
+
+  const q=document.getElementById('search')?document.getElementById('search').value.trim():'';
+  list.innerHTML=`<div class="search"><input type="text" id="search" placeholder="بحث في الرواة أو المتن…" value="${q}" oninput="render()" style="width:260px"></div>`+
+    slice.filter(h=>{ if(!q) return true; return (h.narrators.join(' ')+' '+h.matn).includes(q); })
+    .map((h,i)=>{
+    const seq=start+i+1;
+    const cls=isClean(h)?'clean':'bad';
+    const chain=h.narrators.map((n,j)=>{
+      const isRas=h.narrators_full&&h.narrators_full[j]&&h.narrators_full[j].is_rasoul;
+      return `<span class="narr${isRas?' rasoul':''}">${n}</span>`+(j<h.narrators.length-1?'<span class="arrow">←</span>':'');
+    }).join('');
+    return `<div class="hadith ${cls}">
+      <div class="hrow"><span class="seq">التسلسل <b>#${seq}</b></span>
+        <span>${h.number!==-1?`<span class="badge num">رقم ${h.number}</span>`:`<span class="badge bad">بلا رقم</span>`}
+        <span class="badge">${h.narrator_count} رواة</span></span></div>
+      <div class="sec">السند:</div><div class="chain">${chain}</div>
+      <div class="sec">المتن:</div><div class="matn">${h.matn||'<i style=color:#a5432f>— لا متن —</i>'}</div>
+    </div>`;
+  }).join('');
+
+  const pages=Math.ceil(view.length/per);
+  document.getElementById('pager').innerHTML=`
+    <button onclick="go(-1)" ${page===0?'disabled':''}>◀ السابق</button>
+    <span>صفحة ${page+1} من ${pages} (${view.length} حديث)</span>
+    <button onclick="go(1)" ${page>=pages-1?'disabled':''}>التالي ▶</button>`;
+  window.scrollTo(0,0);
+}
+function go(d){ page+=d; render(); }
+</script>
+</body>
+</html>
