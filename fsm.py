@@ -69,6 +69,26 @@ class FsmParams:
     nrc_max: int = 5      # max words between narrators before giving up
     narr_min: int = 3     # min narrators for a valid sanad (used by segmenter)
 
+    # ---- heuristics THIS PORT ADDED; the old FSM had none of them ----------
+    # Kept switchable so a reproduction claim can present both columns rather
+    # than quietly shipping three undocumented rules. Note these are
+    # ADDITIONS, not the port's fidelity FIXES (C1's name gating, C3's
+    # honorific handling, the graph guards) — those are always on, because
+    # turning them off would make the port LESS faithful, not more.
+    matn_cues: bool = True          # 'قال:' can close a sanad
+    pos_hard_stop: bool = True      # a verb/pronoun/particle breaks a name
+    one_chain_per_hadith: bool = True   # after the Imam, no new sanad until
+                                        # the next hadith number
+
+    @classmethod
+    def faithful(cls, **kw):
+        """
+        Exactly the old system's automaton: none of the three additions.
+        Expect more matn leakage — that is the point of having the comparison.
+        """
+        return cls(matn_cues=False, pos_hard_stop=False,
+                   one_chain_per_hadith=False, **kw)
+
 
 class State(Enum):
     TEXT = "TEXT"
@@ -344,7 +364,8 @@ class HadithFSM:
             # is a real matn start. The difference is exactly what follows
             # the colon: a narration word / name (chain continues) versus
             # ordinary words (content begins).
-            if (self.state in (State.NAME, State.NMC, State.NRC)
+            if (self.params.matn_cues
+                    and self.state in (State.NAME, State.NMC, State.NRC)
                     and token.word in self.MATN_CUES
                     and self._is_matn_start(tokens, token)):
                 self._end_chain(token.start, "matn_cue")
@@ -363,7 +384,8 @@ class HadithFSM:
             # a verb, and blindly cutting there truncated 'محمد بن يحيا' to
             # 'محمد بن'. So a verb directly after a name connector (بن/ابو)
             # is treated as a NAME, not a break.
-            if (self.state in (State.NAME, State.NMC)
+            if (self.params.pos_hard_stop
+                    and self.state in (State.NAME, State.NMC)
                     and token.pos in self.NAME_BREAKING_POS
                     and not (token.is_nrc or token.is_nmc or token.is_name
                              or token.is_rasoul or token.is_relative)
@@ -461,7 +483,7 @@ class HadithFSM:
         # after a sanad already completed at the Imam in THIS hadith, do not
         # start a new one from matn text (e.g. "يبلغه عن ابي عبد الله") — wait
         # for the next hadith number. (#220 fix)
-        if self.chain_done_this_hadith:
+        if self.params.one_chain_per_hadith and self.chain_done_this_hadith:
             return
 
         if token.is_name:
@@ -641,7 +663,8 @@ class HadithFSM:
             self._end_chain(token.start, "rasoul")
             # sanad ended at the Imam: block any further sanad in THIS hadith
             # until the next number (blocks matn "عن ابي عبد الله" re-triggers).
-            self.chain_done_this_hadith = True
+            if self.params.one_chain_per_hadith:
+                self.chain_done_this_hadith = True
 
     # ---------------------------------------------------------- small utils
     @staticmethod

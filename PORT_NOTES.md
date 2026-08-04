@@ -325,6 +325,38 @@ A relative narrator was swallowing the following name:
 `روى عنه حرب بن الحسين` became one narrator called `عنه حرب بن الحسين`. This
 affects the hadith path too.
 
+### 3.5 C1 — gating the weak `noun_prop` category
+
+**The root cause of matn leakage.** `pos == "noun_prop"` was accepted as a
+name **anywhere**, so any proper-noun-ish word in the matn became a narrator,
+three of them in a row passed `narr_min`, and a fake sanad was emitted. The
+`MATN_CUES` and `NAME_BREAKING_POS` heuristics in `fsm.py` exist to clean up
+after that — they treat the symptom.
+
+The old system does not trust this category on its own. `bit_NOUN_PROP` is
+deliberately kept **out** of `bits_NAME` (`hadithCommon.cpp:117-133`) and
+appended only while `tryToLearnNames` is set (`hadithCommon.h:259`), which
+happens in exactly four positions:
+
+| # | context | source |
+|---|---|---|
+| 1 | the current word is a family connector | `cpp:1160` |
+| 2 | just after a narration word, ≤1 NRC deep, not mere punctuation | `cpp:1172` |
+| 3 | the **previous** word was a narration word | `cpp:1178` |
+| 4 | the word looks like a nisba (ال…ي) in NRC/NAME context | `cpp:1227` |
+
+plus two hard filters in `analyze()`: the word must carry **no suffix**
+(`h:267`) and its stem must be **at least 3 characters** (`h:269`).
+
+Implemented as `TokenInfo.is_name_candidate` (weak evidence) plus
+`_promote_name_candidates()`, which promotes to `is_name` only in those
+contexts. Promoted names are tagged `camel-learned` in `name_sources`, so the
+provenance is visible in the output. `has_enclitic` comes from CAMeL's `enc0`
+and stands in for the suffix test.
+
+`ArabicEngine(strict_names=False)` restores the loose behaviour, so the two
+can be compared directly rather than argued about.
+
 ---
 
 ## 4. Phase 3 — the biography stage
@@ -491,7 +523,80 @@ guard — gold made against a different text is an **error**, not a warning.
 This is exactly the trap the deleted `boundary_gold.py` fell into: it built
 "truth" by calling the same segmenter under test, so gold == prediction.
 
-### 5.3 `graph_agreement.py` — Table 1
+### 5.3 `partial_annotation.py` — paper §4.1 (A8)
+
+The paper's **second headline result**: 80% recall / 89% precision (§6).
+
+A scholar selects a few topically-related hadiths, builds a partial graph
+**Gp** from just those, and asks — for each narrator in Gp — which biography
+entries might describe them.
+
+The key structural point is that the original has *both* modes in one class,
+distinguished by two overrides:
+
+| | `modifyNodes()` | `checkBiography()` |
+|---|---|---|
+| `BiographySegmenter` | every narrator in the book | keep top-1, **reject** overlapping spans |
+| `NarratorDetector` (the base class) | the nodes the scholar picked (`:346`) | keep **all top-3**, no overlap rejection (`:375` returns true unconditionally) |
+
+So partial annotation is not a different algorithm — it is the same scoring
+answering a different question. Segmentation must partition the book;
+annotation returns a **ranked shortlist** because the scholar decides. That is
+why §6 says *"the accuracy of biography boundary detection is not well defined
+in this task since the partial graph annotation method reports several
+biographies ranked with a similarity metric."*
+
+**Why Gp and not the full graph** — this is the point of the method. In the
+full graph a prolific narrator has hundreds of neighbours, so "a neighbour
+appears nearby" is weak evidence. In a graph built from ten related hadiths
+a narrator has a handful, and their co-occurrence in one entry is strong
+evidence. The restriction is what makes the ranking sharp. `tests/test_a8.py`
+asserts this directly.
+
+`score_annotations(..., at_k=)` evaluates a hit as *a candidate's span
+overlaps the gold entry at rank ≤ k*. `at_k=1` is the strict reading; since
+the paper reports a shortlist, `at_k=3` is the honest companion and both
+should be given.
+
+Runner: `run_partial.py --contains العقل` or `--numbers 1 2 3`.
+
+### 5.4 `run_equality.py` — paper §5
+
+Port of `narrator_equality_comparision`
+(`narratorEqualityComparision.cpp`). The **only** evaluation that isolates the
+distance metric — everywhere else it is entangled with segmentation and graph
+building, so a metric change barely registers. Here it is the whole signal, and
+each item is a yes/no on a pair of names rather than a span, so a useful gold
+set costs an evening.
+
+Three conditions:
+
+| | |
+|---|---|
+| `eNarrator (edit)` | normalized edit distance > 0.75 — the paper's baseline (`:47`) |
+| `structural` | our port of `equalNew`, qualifiers off — the faithful metric |
+| `+ qualifiers` | with the nisba logic **on** — OUR implementation of §3.2, which the released system never shipped |
+
+The third column is the point: §3.2 describes conflicting nisba
+(العراقي vs المصري) and reinforcing nisba (العراقي + الكوفي), `getdistance()`
+implements it, and nothing calls it. That column measures a claim the paper
+makes and the original never tested.
+
+`--bootstrap <graph.json>` emits the pairs a human should judge, drawn from
+names the **hash already considers plausible** and sampled across score bands.
+Random name pairs are trivially different and teach the evaluation nothing;
+these are the decisions the metric actually has to make:
+
+```
+احمد                          || احمد بن علي بن محمد بن عبد الله
+محمد بن السكين                || محمد بن علي بن معمر
+موسا بن محمد العجلي           || موسا بن محمد بن اسماعيل بن عبيد
+```
+
+`--sweep` shows recall/precision across thresholds; `--disagreements` prints
+the false positives and negatives, which is where the metric needs work.
+
+### 5.5 `graph_agreement.py` — Table 1
 
 Port of `compareGlobalGraphs` (`hadithInterAnnotatorAgreement.cpp:210`). This
 scores **merge decisions**, not spans, which `agreement.py` cannot do. Per
@@ -572,6 +677,27 @@ Every one is documented in the code at the point it occurs.
 | 6 | Sequential disambiguation (A7) added, **off by default** | Not in the original at all. Kept opt-in so the faithful baseline is clean and the gain is measurable. |
 | 7 | `context_check` (B13) left **off** | Not a port. Enabling it must be labelled an improvement. |
 
+### The additions, and how to switch them off (C5)
+
+Three heuristics in `fsm.py` have no counterpart in the original. Each is now
+a parameter, and `tests/test_c5.py` verifies each one actually changes
+behaviour rather than being a dead flag:
+
+| `FsmParams` field | what it adds |
+|---|---|
+| `matn_cues` | `قال:` can close a sanad |
+| `pos_hard_stop` | a verb/pronoun/particle breaks a name |
+| `one_chain_per_hadith` | after the Imam, no new sanad until the next number |
+
+`FsmParams.faithful()` turns all three off; `run_hadith.py --faithful` does
+the same from the command line, and `--loose-names` reverts C1's gating.
+
+**The distinction that matters:** `--faithful` disables the port's
+*additions*. It does **not** disable its *fidelity fixes* — C1's name gating,
+C3's honorific handling, the graph guards — because turning those off would
+make the port **less** faithful, not more. `test_c5.py` asserts this directly:
+`عليه السلام` is not a narrator in either mode.
+
 **Left alone deliberately:** the scorer's precision is weighted by `correct`,
 so a spurious prediction overlapping no gold name has weight zero and cannot
 move precision. That asymmetry is inherent to the paper's formula. Precision
@@ -592,8 +718,11 @@ here means *of the gold words we claimed, how many were right*.
 | `agreement.py` | two-level scorer (A4) — Tables 2 & 3 |
 | `graph_agreement.py` | merge-decision scorer — Table 1 |
 | `gold.py` | canonical gold store + safeguard (A5) |
+| `partial_annotation.py` | paper §4.1 partial graph annotation (A8) |
+| `run_partial.py` | runner for §4.1 |
+| `run_equality.py` | paper §5 — metric vs Levenshtein |
 | `qdatastream.py` | reader for the original Qt binaries (A5) |
-| `tests/` | 110-test regression suite + graph harness |
+| `tests/` | 165-test regression suite + graph harness |
 | `PORT_NOTES.md` | this document |
 
 ### Deleted
@@ -617,7 +746,7 @@ here means *of the gold words we claimed, how many were right*.
 py -3.11 tests/run_all.py
 ```
 
-**110 tests, all green.** None require CAMeL — token flags come from
+**165 tests, all green.** None require CAMeL — token flags come from
 `lexicons.py` plus the phrase matcher, or are synthesized by hand. That is
 deliberate: the FSM and graph logic must stay verifiable without the
 morphology layer, so a regression is caught immediately rather than at the
@@ -625,12 +754,16 @@ next full book run.
 
 | file | covers |
 |---|---|
+| `test_c1.py` | gating the weak noun_prop category |
+| `test_c5.py` | the ablation switches |
 | `test_c3.py` | honorific / junk narrators |
 | `test_a1.py` | biography FSM — each documented difference + budget mechanics |
 | `test_a2.py` | graph lookup end-to-end, including a JSON round-trip |
 | `test_a3.py` | graph-derived boundaries + sequential disambiguation |
 | `test_a4.py` | the scorer — primitives hand-checked, then aggregation |
 | `test_a5.py` | Qt reader, the safeguard, validation |
+| `test_a8.py` | partial graph annotation (§4.1) |
+| `test_equality_eval.py` | metric vs edit distance (§5) |
 | `test_table1.py` | merge-decision scoring |
 | `check_graph.py` | **harness**: rebuilds a graph and reports the pass conditions |
 
@@ -644,27 +777,18 @@ intrinsic correctness criterion. Conditions 1 and 2 pass; condition 3
 
 ### For full parity with the old system
 
-- **§4.1 partial graph annotation** — the paper's second headline (80% / 89%)
-  and the natural core of the web demo
-- **The `.equal` runner** — paper §5, our metric vs Levenshtein.
-  `equality.py` has the pieces; there is no runner.
 - **Annotation UI** — plus C6 (`segmentNarrators`), which is precisely the
   "parse a hand-selected span into narrators" utility such a UI needs
   (`hadithChainGraph.cpp:81`)
 
 ### Quality
 
-- **C1** — `pos == "noun_prop"` is accepted unconditionally. This is the
-  **root cause** of matn leakage, currently patched downstream by
-  `MATN_CUES` / `NAME_BREAKING_POS`. The old system admitted `bit_NOUN_PROP`
-  only right after a family connector.
-- **C5** — those two heuristics are hardcoded; a reproduction claim needs
-  `--faithful` vs `--improved` with both sets of numbers.
 - **C2** — nisba detection is `startswith("ال") and endswith("ي")`.
 - **C4** — `_trim_trailing_connectors` does not decrement the narrator count
   as `removeLastSpuriousNarrators` did.
 - **A9** iterative threshold lowering · **A11** narrator gazetteer + nisba
-  lexicon (which would fix C1 and C2 properly)
+  lexicon (which would subsume C2, and would let C1's gating rely on a real
+  gazetteer rather than CAMeL's `noun_prop` alone)
 - **E1–E5** — web app: wrong connector class, hardcoded params, a web/CLI
   filter mismatch, in-memory session state, and `/link-biography` still
   reporting the deleted strawman numbers

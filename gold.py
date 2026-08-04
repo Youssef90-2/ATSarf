@@ -245,6 +245,82 @@ def import_qt_spans(path, text, kind="biography", source="",
 
 
 # ===========================================================================
+# 3b. Narrator-pair judgements (the old `.equal` file, paper §5)
+# ===========================================================================
+
+@dataclass
+class EqualityGold:
+    """
+    Human judgements of the form "are these two written names the same
+    person?" — the old QMap<QPair<QString,QString>, bool>.
+
+    This is the only gold that evaluates the DISTANCE METRIC itself, in
+    isolation from segmentation and graph building. It is also cheap: a pair
+    is a yes/no, not a span.
+    """
+    source: str = ""
+    annotator: str = ""
+    reviewed: bool = False
+    pairs: list = field(default_factory=list)   # [(a, b, bool|None)]
+    format_version: int = FORMAT_VERSION
+
+    def labelled(self):
+        return [(a, b, v) for a, b, v in self.pairs if v is not None]
+
+    def to_dict(self):
+        return {"format_version": self.format_version, "kind": "equality",
+                "source": self.source, "annotator": self.annotator,
+                "reviewed": self.reviewed,
+                "pairs": [{"a": a, "b": b, "equal": v}
+                          for a, b, v in self.pairs]}
+
+    def save(self, path):
+        Path(path).write_text(
+            json.dumps(self.to_dict(), ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        return path
+
+    @staticmethod
+    def load(path):
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        return EqualityGold(
+            source=d.get("source", ""), annotator=d.get("annotator", ""),
+            reviewed=bool(d.get("reviewed")),
+            pairs=[(p["a"], p["b"], p.get("equal"))
+                   for p in d.get("pairs", [])],
+            format_version=d.get("format_version", 0))
+
+    def stats(self):
+        lab = self.labelled()
+        return {"source": self.source, "reviewed": self.reviewed,
+                "pairs": len(self.pairs), "labelled": len(lab),
+                "same_person": sum(1 for _a, _b, v in lab if v),
+                "different": sum(1 for _a, _b, v in lab if not v)}
+
+
+def load_equality_for_scoring(path):
+    """Same refusal as span gold: an unlabelled seed is not evidence."""
+    eq = EqualityGold.load(path)
+    if not eq.reviewed:
+        raise GoldError(
+            f"{Path(path).name} is still a seed (reviewed=false). Its pairs "
+            "carry no human judgement yet — label them, then set "
+            '"reviewed": true.')
+    if not eq.labelled():
+        raise GoldError(f"{Path(path).name} has no labelled pairs.")
+    return eq
+
+
+def import_qt_equality(path, source="", annotator="ATSarf-original"):
+    """Read an original `.equal` binary."""
+    from qdatastream import read_equality_map
+    raw = read_equality_map(path)
+    return EqualityGold(source=source or Path(path).stem, annotator=annotator,
+                        reviewed=True,
+                        pairs=[(a, b, bool(v)) for (a, b), v in raw.items()])
+
+
+# ===========================================================================
 # 4. Validation — catch a broken annotation before it silently skews a table
 # ===========================================================================
 
