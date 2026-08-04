@@ -76,6 +76,16 @@ class TokenInfo:
     #  hadithCommon.h:148 — used to split PARALLEL narrators)
     has_waw: bool = False
 
+    # WEAK name evidence: CAMeL called it noun_prop and nothing else agrees.
+    # Kept separate from is_name because the old system did NOT trust this
+    # category on its own — see _promote_name_candidates.
+    is_name_candidate: bool = False
+
+    # the word carries a pronominal enclitic (كتابه، عنهم). The old analyze()
+    # required `Suffix->info.finish - Suffix->info.start < 0`, i.e. NO suffix,
+    # before accepting a word as a name (hadithCommon.h:267).
+    has_enclitic: bool = False
+
     # --- provenance: which source(s) said it's a name (for debugging/report)
     name_sources: list = field(default_factory=list)  # e.g. ["wojood","camel"]
 
@@ -137,9 +147,13 @@ class CamelLayer:
 
     def analyze_words(self, words: list):
         """
-        Returns a list of (lemma, pos) aligned with `words`.
+        Returns a list of (lemma, pos, has_enclitic) aligned with `words`.
         Lemmas are normalized (CAMeL returns them WITH diacritics,
         e.g. أَخْبَر — we normalize to اخبر so lexicons can match).
+
+        `has_enclitic` stands in for the old suffix test: a word carrying a
+        pronominal enclitic is not a bare proper name (hadithCommon.h:267
+        required no suffix at all before accepting one).
         """
         results = []
         disambiguated = self.disambiguator.disambiguate(words)
@@ -148,9 +162,11 @@ class CamelLayer:
                 analysis = d.analyses[0].analysis
                 lemma = normalize_word(analysis.get("lex", ""))
                 pos = analysis.get("pos", "")
+                enc = str(analysis.get("enc0", "") or "")
+                has_enclitic = bool(enc) and enc not in ("0", "na", "-")
             else:
-                lemma, pos = "", ""
-            results.append((lemma, pos))
+                lemma, pos, has_enclitic = "", "", False
+            results.append((lemma, pos, has_enclitic))
         return results
 
 
@@ -197,9 +213,17 @@ class WojoodLayer:
 class ArabicEngine:
 
     def __init__(self, camel_mode: str = "mle", use_wojood: bool = True,
-                 cache_dir: str = ".engine_cache"):
+                 cache_dir: str = ".engine_cache", strict_names: bool = True):
+        """
+        strict_names=True  (default) reproduces the old gating: a bare CAMeL
+                           `noun_prop` is accepted as a name only where a name
+                           is expected. See _promote_name_candidates.
+        strict_names=False the previous behaviour — accept noun_prop anywhere.
+                           Kept so the two can be compared directly (C5).
+        """
         self.camel = CamelLayer(mode=camel_mode)
         self.wojood = WojoodLayer(enabled=use_wojood)
+        self.strict_names = strict_names
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -233,6 +257,70 @@ class ArabicEngine:
         token.is_rasoul = lexicons.is_rasoul_word(w)
         token.is_relative = lexicons.is_relative_narrator(w) \
             or (lemma and lexicons.is_relative_narrator(lemma))
+
+    # ---- C1: gate the weak noun_prop category on context ------------------
+    MIN_NAME_CHARS = 3          # old: removeDiacritics(stem).count() < 3 -> skip
+
+    @staticmethod
+    def _looks_like_nisba(word: str) -> bool:
+        """starts with ال and ends in ي — old startsWithAL(n) && last == ya2."""
+        return word.startswith("ال") and word.endswith("ي") and len(word) > 3
+
+    def _promote_name_candidates(self, tokens: list):
+        """
+        Decide which weak `noun_prop` candidates really are names.
+
+        THE PROBLEM THIS FIXES. `pos == "noun_prop"` was accepted anywhere,
+        so any capitalised-looking noun in the matn became a narrator. That is
+        the root cause of the matn leakage that `MATN_CUES` and
+        `NAME_BREAKING_POS` in fsm.py patch downstream — those two heuristics
+        exist because names were being invented in the first place.
+
+        THE OLD RULE. `bit_NOUN_PROP` is deliberately NOT in `bits_NAME`
+        (hadithCommon.cpp:117-133). It is appended only while
+        `tryToLearnNames` is set (hadithCommon.h:259), which happens in
+        exactly four places:
+
+          1. the current word is a family connector      (cpp:1160, familyNMC)
+          2. we are just after a narration word, at most one NRC deep and not
+             merely punctuation                          (cpp:1172, nrcLearning)
+          3. the PREVIOUS word was a narration word      (cpp:1178)
+          4. the word looks like a nisba (ال...ي) while we are in an NRC or
+             NAME context                                (cpp:1227)
+
+        plus two hard filters in analyze(): the word must carry NO suffix
+        (h:267) and its stem must be at least 3 characters (h:269).
+
+        Translated to the token stream — which is all this layer has, since it
+        runs before the FSM — that is: a name connector or narration word on
+        one side, or a connector coming next, or a nisba in narration context.
+        """
+        n = len(tokens)
+
+        def neighbour(i, step):
+            j = i + step
+            while 0 <= j < n and (tokens[j].is_punct or tokens[j].is_number):
+                j += step
+            return tokens[j] if 0 <= j < n else None
+
+        for i, token in enumerate(tokens):
+            if not token.is_name_candidate or token.is_name:
+                continue
+            if len(token.word) < self.MIN_NAME_CHARS:
+                continue                      # old: stem shorter than 3
+            if token.has_enclitic:
+                continue                      # old: must have no suffix
+
+            prev, nxt = neighbour(i, -1), neighbour(i, +1)
+            expected = (
+                (prev is not None and (prev.is_nmc or prev.is_nrc))   # 1, 2, 3
+                or (nxt is not None and nxt.is_nmc)                   # ... بن X
+                or (self._looks_like_nisba(token.word)                # 4
+                    and prev is not None and (prev.is_nrc or prev.is_name))
+            )
+            if expected:
+                token.is_name = True
+                token.name_sources.append("camel-learned")
 
     def _apply_context_name_rule(self, tokens: list):
         """
@@ -277,13 +365,22 @@ class ArabicEngine:
         # 2) CAMeL lemma+POS (only for real words)
         words = [tokens[i].word for i in word_indexes]
         if words:
-            for idx, (lemma, pos) in zip(word_indexes,
-                                         self.camel.analyze_words(words)):
+            for idx, (lemma, pos, enc) in zip(word_indexes,
+                                              self.camel.analyze_words(words)):
                 tokens[idx].lemma = lemma
                 tokens[idx].pos = pos
+                tokens[idx].has_enclitic = enc
                 if pos == "noun_prop":
-                    tokens[idx].is_name = True
-                    tokens[idx].name_sources.append("camel")
+                    # WEAK evidence only. The old system kept this category
+                    # (bit_NOUN_PROP) OUT of bits_NAME and admitted it solely
+                    # when `tryToLearnNames` was on — i.e. in a position where
+                    # a name was already expected. See
+                    # _promote_name_candidates for the four contexts.
+                    if self.strict_names:
+                        tokens[idx].is_name_candidate = True
+                    else:
+                        tokens[idx].is_name = True
+                        tokens[idx].name_sources.append("camel")
 
         # 2b) waw-prefix detection (old hadith_stemmer.has_waw).
         #     The old system got this from Sarf's prefix analysis; we get it
@@ -323,6 +420,7 @@ class ArabicEngine:
             self._apply_lexicon_flags(token)
             if token.is_nrc or token.is_nmc or token.is_rasoul:
                 token.is_name = False
+                token.is_name_candidate = False
                 token.name_sources.clear()
 
         # 5) multi-word phrases — token-level flags can't see them.
@@ -330,7 +428,13 @@ class ArabicEngine:
         #    (compound narrator -> IS a narrator), ابي عبد الله (imam kunya).
         self._apply_phrase_flags(clean_text, tokens)
 
-        # 6) context rule (old tryToLearnNames)
+        # 6) C1: promote weak noun_prop candidates only where a name is
+        #    expected (the old tryToLearnNames gate). Runs before the
+        #    zero-evidence context rule so the two do not double-fire.
+        if self.strict_names:
+            self._promote_name_candidates(tokens)
+
+        # 7) context rule for words with NO morphological evidence at all
         self._apply_context_name_rule(tokens)
 
         return tokens

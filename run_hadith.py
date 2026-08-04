@@ -70,6 +70,14 @@ def main():
                         help="disable Wojood NER (CAMeL+context only)")
     parser.add_argument("--camel-mode", choices=["mle", "bert"],
                         default="mle")
+    parser.add_argument("--faithful", action="store_true",
+                        help="disable the three FSM heuristics this port "
+                             "added (matn cues, POS hard-stop, one chain per "
+                             "hadith) so the automaton matches the original; "
+                             "fidelity FIXES stay on")
+    parser.add_argument("--loose-names", action="store_true",
+                        help="accept CAMeL noun_prop anywhere, as before C1 "
+                             "(for the ablation; expect matn leakage)")
     parser.add_argument("--start-marker", default="",
                         help="regex; skip text before it (front matter). "
                              "Example for kafi: \"كتاب العقل\"")
@@ -84,14 +92,24 @@ def main():
 
     print("loading engine...")
     engine = ArabicEngine(camel_mode=args.camel_mode,
-                          use_wojood=not args.no_wojood)
+                          use_wojood=not args.no_wojood,
+                          strict_names=not args.loose_names)
     print("  wojood:", engine.wojood.available,
-          "| camel mode:", args.camel_mode)
+          "| camel mode:", args.camel_mode,
+          "| strict names:", not args.loose_names)
 
-    config = SegmenterConfig(fsm=FsmParams(nmc_max=args.nmc_max,
-                                           nrc_max=args.nrc_max,
-                                           narr_min=args.narr_min),
-                             start_marker=args.start_marker)
+    # --faithful drops the three heuristics THIS PORT ADDED to the automaton.
+    # It does NOT disable the fidelity fixes (C1's name gating, C3's honorific
+    # handling, the graph guards) — turning those off would make the port less
+    # faithful, not more. See PORT_NOTES.md §7.
+    make = FsmParams.faithful if args.faithful else FsmParams
+    fsm_params = make(nmc_max=args.nmc_max, nrc_max=args.nrc_max,
+                      narr_min=args.narr_min)
+    if args.faithful:
+        print("  FSM: faithful mode — matn cues, POS hard-stop and "
+              "one-chain-per-hadith are OFF")
+
+    config = SegmenterConfig(fsm=fsm_params, start_marker=args.start_marker)
     segmenter = HadithSegmenter(engine, config)
 
     print("segmenting (first run on a big book takes a few minutes; "

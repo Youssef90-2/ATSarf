@@ -186,7 +186,9 @@ if __name__ == "__main__":
     print(f"'يا' بالمنظّف موقعها {start_clean}، وبالأصلي موقعها {start_original}")
     print("الحرف بالنص الأصلي عند هالموقع:", repr(original[start_original]))
 
-
-
-result = normalize_word("حَدَّثَنَا")
-print(result == "حدثنا")   # بيطبع True
+    # ملاحظة: منقرا الملفات دايماً بـ text-mode utf-8 (مش newline='')، لأنه
+    # Python بيوحّد CRLF -> LF لحالو، وهيك المواقع بتطابق ملفات الـ gold
+    # يلي انعملت على نسخة LF بالنظام القديم.
+    result = normalize_word("حَدَّثَنَا")
+    print("normalize_word('حَدَّثَنَا') ==", repr(result),
+          "->", result == "حدثنا")

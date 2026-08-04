@@ -30,8 +30,8 @@ Ranks and cycle-breaking are applied later by narrator_graph.py.
 
 from dataclasses import dataclass
 
-from graph_nodes import ChainNarratorNode, GraphNarratorNode
-from name_hash import NameHash
+from graph_nodes import ChainNarratorNode, GraphNarratorNode, GroupNode
+from name_hash import NameHash, primary_key
 from equality import narrator_distance
 
 
@@ -51,9 +51,12 @@ class GraphBuilder:
         self.params = params or GraphParams()
         self.chain_nodes = {}        # id -> ChainNarratorNode
         self.persons = {}            # id -> GraphNarratorNode
+        self.groups = {}             # id -> GroupNode  (atomic merge units)
+        self._groups_by_key = {}     # exact key -> list[GroupNode]
         self.hash = NameHash()
         self._next_chain_id = 0
         self._next_person_id = 0
+        self._next_group_id = 0
         # name-embedding model (AraBERT), built lazily only in hybrid mode
         self._embedder = None
         if self.params.metric_mode == "hybrid":
@@ -66,6 +69,11 @@ class GraphBuilder:
         # (chain_id, position) -> chain_node id, to reach a node's neighbours
         # in its sanad (the next narrator = its "child", old equalHelper).
         self._pos_index = {}
+        # per-person caches so the two mustMerge guards are O(1) instead of
+        # O(occurrences) -- a 400-occurrence node would otherwise be rescanned
+        # on every candidate test.
+        self._person_chains = {}     # pid -> set of chain_ids it appears in
+        self._person_span = {}       # pid -> [lowest position, highest position]
 
     # ------------------------------------------------------------ step 1
     def _transform_chains(self, chains):
@@ -90,32 +98,50 @@ class GraphBuilder:
     def _find_or_create_person(self, chain_node: ChainNarratorNode) -> int:
         """
         Decide which person this occurrence is. Returns a person id.
-        Uses hash blocking + equality scoring + generation radius.
+
+        TWO STAGES, exactly like the old buildGraph (graph.h:1093-1118):
+
+          A. EXACT key  (old BuildAction + performActionToExactCorrespondingNodes)
+             Same written name -> join that GroupNode. No scoring needed.
+          B. FUZZY      (old MergeAction + performActionToAllCorrespondingNodes)
+             Otherwise open a new GroupNode and fuse it into the best-scoring
+             existing person, if any clears the threshold and the guards.
         """
         c = chain_node.canonical
+        key = primary_key(c)
 
         # relative narrators (ابيه) never merge by name — always their own
         # person for now; Part 3 / graph structure resolves them later.
         if c.is_relative:
-            return self._create_person(chain_node)
+            return self._new_person_for(self._new_group(key, chain_node))
 
         # rasoul: all rasoul occurrences are the SAME single node
         if c.is_rasoul:
             for pid, person in self.persons.items():
                 if person.is_rasoul:
+                    self._join_group(pid, key, chain_node)
                     return pid
-            return self._create_person(chain_node)
+            return self._new_person_for(self._new_group(key, chain_node))
 
-        # 1) candidates via hash (only names sharing a key)
-        candidates = self.hash.find_candidates(c)   # {person_id: key_score}
+        # ---- STAGE A: an existing group with the identical key ----
+        for group in self._groups_by_key.get(key, ()):
+            pid = group.person_id
+            person = self.persons.get(pid)
+            if person is not None and not self._merge_allowed(chain_node, pid):
+                continue
+            group.add(chain_node)
+            chain_node.group_id = pid
+            self._note(pid, chain_node)
+            return pid
 
-        # 2) score real candidates, respect the generation radius
+        # ---- STAGE B: fuzzy match against existing persons ----
+        group = self._new_group(key, chain_node)
         best_id, best_score = None, self.params.equality_threshold
-        for pid, _key_score in candidates.items():
+        for pid, _key_score in self.hash.find_candidates(c).items():
             person = self.persons.get(pid)
             if person is None:
                 continue
-            if not self._within_radius(chain_node, person):
+            if not self._merge_allowed(chain_node, pid):
                 continue
             # compare against the person's fullest known form
             score = self._score_against_person(c, person)
@@ -133,35 +159,61 @@ class GraphBuilder:
             best_id, best_score = pid, score
 
         if best_id is not None:
-            self._attach(best_id, chain_node)
+            self._attach_group(best_id, group)
             return best_id
-        return self._create_person(chain_node)
+        return self._new_person_for(group)
 
     def _score_against_person(self, canonical, person: GraphNarratorNode):
-        """Best equality score of `canonical` vs any occurrence of person."""
-        from name_model import canonize_string
+        """
+        Best equality score of `canonical` vs any GROUP of the person.
+        Compares cached CanonicalNames — the old code re-derived a canonical
+        form from the name STRING on every comparison, which both threw away
+        the FSM's real connector tags and cost an O(n) re-parse per pair.
+        """
         best = 0.0
-        for name in person.names:
-            other = canonize_string(name)
-            s = narrator_distance(canonical, other,
+        for group in person.groups:
+            s = narrator_distance(canonical, group.canonical,
                                   self.params.qualifiers_mode,
                                   self.params.metric_mode,
                                   self._embedder)
             best = max(best, s)
         return best
 
-    def _within_radius(self, chain_node, person: GraphNarratorNode) -> bool:
+    # ------------------------------------------------------- merge guards
+    def _merge_allowed(self, chain_node, person_id: int) -> bool:
         """
-        Generation guard (paper's r): the occurrence's position in its chain
-        must be within `equality_radius` of the person's known positions.
-        Position in a sanad ~ generation from the Prophet.
+        Both mustMerge vetoes (graph.h:900-924), applied at PERSON level as
+        the old code did (it read the GraphNarratorNode's lowest/highest and
+        its per-chain slot, not the individual group's).
         """
-        r = self.params.equality_radius
-        for occ_id in person.occurrences:
-            occ = self.chain_nodes[occ_id]
-            if abs(occ.position - chain_node.position) <= r:
-                return True
-        return len(person.occurrences) == 0
+        return (not self._same_chain_conflict(chain_node, person_id)
+                and self._within_radius(chain_node, person_id))
+
+    def _same_chain_conflict(self, chain_node, person_id: int) -> bool:
+        """True if `person_id` already has an occurrence in this sanad."""
+        return chain_node.chain_id in self._person_chains.get(person_id, ())
+
+    def _within_radius(self, chain_node, person_id: int) -> bool:
+        """
+        Generation guard (paper's r), as the old mustMerge computed it
+        (graph.h:914-924):
+
+            least   = min(new_position, group.getLowestIndex())
+            highest = max(new_position, group.getHighestIndex())
+            return highest - least <= equality_radius
+
+        The test is on the SPAN of the whole group once the new occurrence
+        joins -- not on the distance to the nearest existing occurrence. The
+        previous any-occurrence version let a group ratchet across generations
+        one hop at a time (0 merges with 3, 3 with 6, 6 with 9 ...), which is
+        how a single node came to span 12 positions of an isnad.
+        """
+        span = self._person_span.get(person_id)
+        if span is None:
+            return True
+        lowest = min(span[0], chain_node.position)
+        highest = max(span[1], chain_node.position)
+        return highest - lowest <= self.params.equality_radius
 
     def _child_of(self, node):
         """The next narrator in the same sanad (old getChild), or None."""
@@ -213,27 +265,54 @@ class GraphBuilder:
                 return True
         return False
 
-    # ---- person creation / attachment ----
-    def _create_person(self, chain_node) -> int:
+    # ---- group / person creation and attachment ----
+    def _new_group(self, key, chain_node) -> GroupNode:
+        gid = self._next_group_id
+        self._next_group_id += 1
+        group = GroupNode(gid, key, chain_node)
+        self.groups[gid] = group
+        self._groups_by_key.setdefault(key, []).append(group)
+        return group
+
+    def _join_group(self, person_id, key, chain_node):
+        """Add an occurrence to this person's group with `key`, or open one."""
+        person = self.persons[person_id]
+        for group in person.groups:
+            if group.key == key:
+                group.add(chain_node)
+                chain_node.group_id = person_id
+                self._note(person_id, chain_node)
+                return
+        self._attach_group(person_id, self._new_group(key, chain_node))
+
+    def _new_person_for(self, group: GroupNode) -> int:
         pid = self._next_person_id
         self._next_person_id += 1
-        person = GraphNarratorNode(pid)
-        person.add_occurrence(chain_node)
-        chain_node.group_id = pid
-        self.persons[pid] = person
-        # index this person's (fullest) name in the hash for future lookups
-        if not chain_node.canonical.is_relative:
-            self.hash.add(pid, chain_node.canonical)
+        self.persons[pid] = GraphNarratorNode(pid)
+        self._person_chains[pid] = set()
+        self._person_span[pid] = [group.lowest, group.highest]
+        self._attach_group(pid, group)
         return pid
 
-    def _attach(self, person_id, chain_node):
+    def _attach_group(self, person_id, group: GroupNode):
         person = self.persons[person_id]
-        had_name = chain_node.name in person.names
-        person.add_occurrence(chain_node)
-        chain_node.group_id = person_id
-        # if this occurrence introduced a new (fuller) name form, index it too
-        if not had_name and not chain_node.canonical.is_relative:
-            self.hash.add(person_id, chain_node.canonical)
+        person.add_group(group)
+        for oid in group.occurrence_ids:
+            self.chain_nodes[oid].group_id = person_id
+        self._person_chains[person_id] |= group.chain_ids
+        span = self._person_span[person_id]
+        span[0] = min(span[0], group.lowest)
+        span[1] = max(span[1], group.highest)
+        # index this name form in the hash so later occurrences can find it
+        if not group.canonical.is_relative:
+            self.hash.add(person_id, group.canonical)
+
+    def _note(self, person_id, chain_node):
+        """Keep the guard caches current after an in-place group addition."""
+        self._person_chains[person_id].add(chain_node.chain_id)
+        span = self._person_span[person_id]
+        span[0] = min(span[0], chain_node.position)
+        span[1] = max(span[1], chain_node.position)
 
     # ------------------------------------------------------------ step 3
     def _add_edges(self, chain_sequences):
@@ -275,6 +354,7 @@ class GraphBuilder:
                      if p.occurrence_count > 1)
         return {
             "chain_occurrences": len(self.chain_nodes),
+            "groups": len(self.groups),
             "unique_persons": len(self.persons),
             "merged_persons": merged,
             "edges": edges,

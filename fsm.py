@@ -55,6 +55,7 @@ All parameters tunable (old hadithParameters):
 from dataclasses import dataclass, field
 from enum import Enum
 
+import lexicons
 from models import (Chain, Narrator, NarratorConnector, ConnectorType)
 
 
@@ -67,6 +68,26 @@ class FsmParams:
     nmc_max: int = 3      # max non-name words tolerated inside a name
     nrc_max: int = 5      # max words between narrators before giving up
     narr_min: int = 3     # min narrators for a valid sanad (used by segmenter)
+
+    # ---- heuristics THIS PORT ADDED; the old FSM had none of them ----------
+    # Kept switchable so a reproduction claim can present both columns rather
+    # than quietly shipping three undocumented rules. Note these are
+    # ADDITIONS, not the port's fidelity FIXES (C1's name gating, C3's
+    # honorific handling, the graph guards) — those are always on, because
+    # turning them off would make the port LESS faithful, not more.
+    matn_cues: bool = True          # 'قال:' can close a sanad
+    pos_hard_stop: bool = True      # a verb/pronoun/particle breaks a name
+    one_chain_per_hadith: bool = True   # after the Imam, no new sanad until
+                                        # the next hadith number
+
+    @classmethod
+    def faithful(cls, **kw):
+        """
+        Exactly the old system's automaton: none of the three additions.
+        Expect more matn leakage — that is the point of having the comparison.
+        """
+        return cls(matn_cues=False, pos_hard_stop=False,
+                   one_chain_per_hadith=False, **kw)
 
 
 class State(Enum):
@@ -199,13 +220,76 @@ class HadithFSM:
         self.chain.add(NarratorConnector(token.word, token.start, token.end))
 
     def _mark_rasoul(self, token):
-        self._ensure_narrator()
-        self.current_narrator.add_name(token.word, token.start, token.end)
-        self.current_narrator.is_rasoul = True
+        """
+        Attach an honorific / rasoul word.
+
+        AN HONORIFIC IS NEVER A NARRATOR OF ITS OWN. If no narrator is open,
+        the word belongs to the one just closed (عن ابي عبد الله عليه السلام),
+        not to a fresh node. Without this, 'عليه السلام' became a standalone
+        narrator 1,031 times in kafi1 — 11.5% of every narrator slot, and the
+        largest node in the whole graph.
+        """
+        # Already building the Prophet's node -> keep extending it, so
+        # 'رسول' + 'الله' + 'صلا الله عليه واله' stay one narrator.
+        if self.current_narrator is not None and self.current_narrator.is_rasoul:
+            self.current_narrator.add_name(token.word, token.start, token.end)
+            return
+
+        if lexicons.is_prophet_token(token.word):
+            # The Prophet is a PERSON, not a qualifier: close whatever name is
+            # open (عن ابي هريره عن رسول الله -> two narrators) and open his.
+            if self.current_narrator is not None:
+                self._close_narrator()
+            self._ensure_narrator()
+            self.current_narrator.add_name(token.word, token.start, token.end)
+            self.current_narrator.is_rasoul = True
+            return
+
+        # A pure modifier (عليه السلام / رضي الله عنه) contributes NOTHING to
+        # the narrator: it is decoration on a name, not part of it. Two
+        # reasons it must not be appended:
+        #   * identity — 'ابي عبد الله عليه السلام' and 'ابي عبد الله' are the
+        #     same person, but the extra words change the exact hash key, so
+        #     they would land in different buckets and never be compared;
+        #   * is_rasoul — flagging the narrator collapses every flagged node
+        #     into ONE graph node, fusing Imam al-Sadiq with Imam al-Baqir.
+        # The state machine still moves to STOP, so the sanad still ends here.
+        return
+
+    @staticmethod
+    def _is_honorific_only(narrator) -> bool:
+        """
+        Is this "narrator" nothing but an honorific? (عليه السلام / رضي الله
+        عنه / a bare الله). A reference to the Prophet himself (رسول الله /
+        النبي) does NOT count — that is a real terminal narrator, which is why
+        the old system kept those two vocabularies in separate files
+        (src/case/stop_words vs src/case/phrases).
+        """
+        words = [p.text for p in narrator.parts if p.text]
+        if not words:
+            return False
+        if any(lexicons.is_prophet_token(w) for w in words):
+            return False
+        return all(lexicons.is_honorific_modifier(w) for w in words)
+
+    def _absorb_honorific_narrators(self):
+        """
+        Safety net for the invariant: whatever state produced it, a narrator
+        made only of honorific words is folded into the narrator before it
+        (or dropped if it is the first). Catches the cases the state handlers
+        cannot see — the flag combination that opens a fresh narrator on an
+        honorific depends on the morphology layer, so we enforce the result
+        rather than every path into it.
+        """
+        kept = [item for item in self.chain.items
+                if not (isinstance(item, Narrator)
+                        and self._is_honorific_only(item))]
+        self.chain.items = kept
 
     def _end_chain(self, end_pos: int, reason: str):
         """Old `return false` — the chain attempt is over."""
         self._close_narrator()
+        self._absorb_honorific_narrators()
         self._trim_trailing_connectors()       # old removeLastSpuriousNarrators
         if self.chain.narrator_count > 0:
             self.candidates.append(ChainCandidate(
@@ -236,6 +320,9 @@ class HadithFSM:
         self._token_index = {id(t): i for i, t in enumerate(tokens)}
 
         for token in tokens:
+            # per-token hook; biography mode uses it to drain the tolerance
+            # budget (old bio_nrcCount, hadithCommon.cpp:264-268). No-op here.
+            self._on_token(token)
 
             # ---------- punctuation & numbers: boundary bookkeeping -------
             if token.is_punct or token.is_number:
@@ -277,7 +364,8 @@ class HadithFSM:
             # is a real matn start. The difference is exactly what follows
             # the colon: a narration word / name (chain continues) versus
             # ordinary words (content begins).
-            if (self.state in (State.NAME, State.NMC, State.NRC)
+            if (self.params.matn_cues
+                    and self.state in (State.NAME, State.NMC, State.NRC)
                     and token.word in self.MATN_CUES
                     and self._is_matn_start(tokens, token)):
                 self._end_chain(token.start, "matn_cue")
@@ -296,7 +384,8 @@ class HadithFSM:
             # a verb, and blindly cutting there truncated 'محمد بن يحيا' to
             # 'محمد بن'. So a verb directly after a name connector (بن/ابو)
             # is treated as a NAME, not a break.
-            if (self.state in (State.NAME, State.NMC)
+            if (self.params.pos_hard_stop
+                    and self.state in (State.NAME, State.NMC)
                     and token.pos in self.NAME_BREAKING_POS
                     and not (token.is_nrc or token.is_nmc or token.is_name
                              or token.is_rasoul or token.is_relative)
@@ -341,6 +430,9 @@ class HadithFSM:
         if self.state != State.TEXT:
             self._end_chain(self.last_word_end, "eof")
         return self.candidates
+
+    def _on_token(self, token):
+        """Hook called once per token before dispatch. Overridden by bio mode."""
 
     def _after_name_connector(self) -> bool:
         """
@@ -391,7 +483,7 @@ class HadithFSM:
         # after a sanad already completed at the Imam in THIS hadith, do not
         # start a new one from matn text (e.g. "يبلغه عن ابي عبد الله") — wait
         # for the next hadith number. (#220 fix)
-        if self.chain_done_this_hadith:
+        if self.params.one_chain_per_hadith and self.chain_done_this_hadith:
             return
 
         if token.is_name:
@@ -456,6 +548,14 @@ class HadithFSM:
                 self.state = State.NRC   # stays NRC; next NAME opens narrator
         else:
             if token.is_name:
+                # A relative narrator (عن ابيه / وعنه) is a COMPLETE one-word
+                # narrator whose identity the graph resolves later. It must
+                # not swallow the name that follows it — 'روى عنه حرب بن
+                # الحسين' is the connector عنه plus the narrator حرب بن
+                # الحسين, not one narrator called 'عنه حرب بن الحسين'.
+                if self.current_narrator is not None \
+                        and self.current_narrator.is_relative:
+                    self._close_narrator()
                 self._add_name(token)              # multi-word name: محمد + يعقوب
             else:
                 # unknown word inside a name -> NMC-style tolerance
@@ -503,16 +603,9 @@ class HadithFSM:
         p = self.params
 
         if is_rasoul:
-            # rasoul right after عن with no name between: attach the honorific
-            # to the LAST narrator already in the chain if there is one, rather
-            # than creating a bare "عليه السلام" narrator.
-            if self.current_narrator is None and self.chain.narrator_count > 0:
-                last = self.chain.narrators[-1]
-                if last is not None:
-                    last.add_name(token.word, token.start, token.end)
-                    last.is_rasoul = True
-                    self.state = State.STOP
-                    return
+            # rasoul right after عن with no name between — _mark_rasoul knows
+            # whether to open the Prophet's node or attach a modifier to the
+            # narrator already in the chain.
             self._mark_rasoul(token)
             self.state = State.STOP
             return
@@ -562,22 +655,16 @@ class HadithFSM:
     def _in_stop(self, token, is_rasoul):
         if token.is_rasoul:
             # extend the honorific: عليه + السلام, صلى الله عليه وسلم...
-            if self.current_narrator is not None:
-                self.current_narrator.add_name(token.word, token.start, token.end)
-                self.current_narrator.is_rasoul = True
-            elif self.chain.narrator_count > 0:
-                # honorific was attached to an already-closed narrator (نادر،
-                # rasoul right after عن); keep extending that last narrator.
-                last = self.chain.narrators[-1]
-                last.add_name(token.word, token.start, token.end)
-                last.is_rasoul = True
+            # _mark_rasoul routes to the right target and decides is_rasoul.
+            self._mark_rasoul(token)
         else:
             # THE clean sanad-complete signal (old STOP_WORD_S exit,
             # hadith mode: return false). The matn starts at this token.
             self._end_chain(token.start, "rasoul")
             # sanad ended at the Imam: block any further sanad in THIS hadith
             # until the next number (blocks matn "عن ابي عبد الله" re-triggers).
-            self.chain_done_this_hadith = True
+            if self.params.one_chain_per_hadith:
+                self.chain_done_this_hadith = True
 
     # ---------------------------------------------------------- small utils
     @staticmethod

@@ -1,52 +1,46 @@
 """
 run_biography.py
 ================
-IDEA: The end-to-end biography runner AND the Table-2 evaluation — YOUR tool.
-Reproduces the paper's central cross-document result (§6, Table 2): the hadith
-narrator graph improves biography narrator/boundary detection.
+The paper's cross-document experiment, end to end (paper §4, §6 Table 2).
 
-    py -3.11 run_biography.py khoei.txt kafi12.clean.graph.json
-    py -3.11 run_biography.py khoei.entries.json kafi12.clean.graph.json
-      (accepts either the raw rijal book OR a pre-made .entries.json)
+    py -3.11 run_biography.py khoei.txt kafi1.clean.graph.json --gold khoei.bio.gold.json
 
-PIPELINE:
-    rijal book --segment--> entries (subject + teachers/students + span)
-              --link (NO-GRAPH)--> baseline detection
-              --link (WITH-GRAPH)--> cross-doc detection
-              --compare--> Table-2-style recall / precision
+WHAT IT DOES
+    rijal book --normalize--> clean text --engine--> tokens
+              --BiographyFSM--> flat narrator mentions   (the old narratorList)
+              --BiographyDetector--> graph-derived entry spans
+              --agreement.score--> segmentation / detection / boundary
+
+run TWICE, with the SAME automaton, differing in one argument:
+
+    NO-GRAPH    BiographyFSM(confirm=None)
+    WITH-GRAPH  BiographyFSM(confirm=GraphIndex.confirm)
+
+That single switch is the paper's independent variable. Everything else —
+the FSM, its parameters, the detector, the scorer — is identical, which is
+what makes the two columns comparable.
 
 --------------------------------------------------------------------------
-HOW WE MEASURE (honest, defensible — read this for the report):
+WHAT THIS FILE REPLACES, and why it had to be replaced.
 
-The paper measured narrator/boundary detection against a HUMAN gold
-annotation. We do not have one. What the Khoei book DOES give us for free is
-a reliable gold signal for each entry's CONTENT: the narrators that truly
-belong to entry N are its subject plus the teachers/students the book itself
-lists after "روى عن / روى عنه". So we evaluate, per entry, whether a method
-correctly identifies that this entry's subject is a real graph narrator AND
-places the entry's true neighbours inside it.
+The previous version compared two DIFFERENT methods and scored them against
+gold produced by the very regex that made the predictions:
 
-Two quantities, exactly parallel to the paper:
+  * `boundary_gold.py` built the "truth" by calling BiographySegmenter —
+    the same segmenter under test. Gold == prediction, so every number it
+    produced was meaningless. Deleted.
+  * the no-graph baseline was `if len(candidates) == 1: correct`, a
+    name-uniqueness heuristic that is not the paper's baseline and cannot
+    win. The paper's baseline is the same FSM with the graph switched off,
+    which is what `confirm=None` now gives.
+  * the metric was a set-membership ratio over listed neighbours. The
+    paper's boundary metric is at WORD granularity (agreement.py).
 
-  NARRATOR DETECTION  (paper Table 2, top block)
-    recall    = detected real-narrator subjects / all in-graph subjects
-    precision = correct detections / all detections
-
-  BOUNDARY / NEIGHBOUR RECALL  (paper Table 2, bottom block — the 41%->93%)
-    For each entry, of the neighbours the book lists (its true teachers/
-    students), how many does the method actually confirm as belonging to the
-    entry's subject?
-      - NO-GRAPH  can't confirm neighbours at all (it only matched a name) ->
-        it recovers a neighbour only if the name coincidentally is unambiguous.
-        This is the paper's low-recall baseline.
-      - WITH-GRAPH confirms a neighbour when it is a graph neighbour of the
-        chosen person -> high recall, because the graph knows who belongs.
-    boundary_recall = confirmed neighbours / listed neighbours (micro-avg)
-
-This is NOT the paper's exact numbers (different book, no human gold), but it
-is the SAME experiment shape and it is computed only from signals we can
-verify. Report it as "reproduction of the Table-2 effect on Kafi×Khoei".
 --------------------------------------------------------------------------
+NO GOLD? Then no statistics — by design. Following the old system
+(AbstractTwoLevelAgreement.cpp:178), a missing gold file causes the run to
+WRITE A SEED from its own output, tell you to correct it, and stop. Scoring
+against uncorrected output is the trap described above.
 """
 
 import argparse
@@ -54,214 +48,238 @@ import json
 import sys
 from pathlib import Path
 
-from biography_linker import Graph, canonize_string
-from equality import narrator_distance
+from agreement import TwoLevelItem, score, format_report
+from bio_fsm import BiographyFSM, BioParams
+from biography_detector import BiographyDetector, BiographyParams
+from gold import (GoldError, bootstrap_from_biographies, load_for_scoring,
+                  validate)
+from narrator_matcher import GraphIndex
+from normalization import normalize
 
 
 # ===========================================================================
-# 1. Load entries (from raw book via segmenter, or from a .entries.json)
+# 1. Tokens
 # ===========================================================================
 
-def load_entries(path: Path):
-    if path.suffix == ".json" or path.name.endswith(".entries.json"):
-        raw = json.load(open(path, encoding="utf-8"))
-        class E:
-            pass
-        entries = []
-        for d in raw:
-            e = E()
-            e.number = d["number"]; e.subject = d["subject"]
-            e.teachers = d["teachers"]; e.students = d["students"]
-            e.is_reference = d.get("is_reference", False)
-            entries.append(e)
-        return entries
-    # raw book -> segment now
-    from biography_segmenter import BiographySegmenter
-    text = path.read_text(encoding="utf-8")
-    entries, _clean, _stats = BiographySegmenter().segment(text)
-    return entries
-
-
-# ===========================================================================
-# 2. Neighbour confirmation — shared helper
-#    Does a given biography name match ANY graph-neighbour of `person_id`?
-# ===========================================================================
-
-def neighbour_matches(bio_name, person_id, graph, threshold=0.1):
-    cb = canonize_string(bio_name)
-    for nid in graph.neighbours(person_id):
-        np = graph.persons.get(nid, {})
-        for form in (np.get("names") or [np.get("primary_name", "")]):
-            if form and narrator_distance(cb, canonize_string(form)) > threshold:
-                return True
-    return False
-
-
-# ===========================================================================
-# 3. Evaluate one method (no-graph or with-graph) over all entries
-# ===========================================================================
-
-def evaluate(entries, graph, use_graph, threshold=0.1):
+def analyze_text(clean_text, use_wojood=True, lexicon_only=False):
     """
-    Returns a dict of counts for narrator detection and boundary/neighbour
-    recall, computed the same way for both methods so they are comparable.
+    Produce TokenInfo for the whole book.
+
+    `lexicon_only` skips CAMeL and Wojood and uses the closed-class lexicons
+    plus the phrase matcher alone. It exists so the pipeline can be exercised
+    on a machine without the models installed — it is NOT a valid setting for
+    reported results, and the runner says so loudly.
     """
-    # detection
-    detections = 0          # entries the method claims are real narrators
-    correct_detections = 0  # ... that are genuinely in the graph
-    in_graph_total = 0      # entries whose subject really is in the graph
+    if not lexicon_only:
+        try:
+            from engine import ArabicEngine
+            engine = ArabicEngine(use_wojood=use_wojood)
+            return engine.analyze_cached(clean_text)
+        except ImportError as exc:
+            sys.exit(
+                f"morphology layer unavailable ({exc}).\n"
+                "Install camel_tools, or pass --lexicon-only for a structural "
+                "smoke test (results from that mode are NOT reportable).")
 
-    # boundary / neighbour recall (micro-averaged over listed neighbours)
-    listed_neighbours = 0
-    confirmed_neighbours = 0
-    # FAIR measure: restrict to neighbours that actually EXIST somewhere in
-    # the graph. A neighbour from a book we didn't ingest can never be
-    # confirmed by any method, so counting it punishes both equally and hides
-    # the graph's real effect. This isolates the graph's disambiguation power.
-    existing_neighbours = 0
-    confirmed_existing = 0
-
-    for e in entries:
-        if e.is_reference:
-            continue
-        true_matches = graph.match(e.subject, threshold)   # ground truth: in graph?
-        is_in_graph = len(true_matches) > 0
-        if is_in_graph:
-            in_graph_total += 1
-
-        listed = list(e.teachers) + list(e.students)
-
-        if not use_graph:
-            # BASELINE: accept top name match as a detection; no neighbour
-            # reasoning -> a listed neighbour is "recovered" only if that name
-            # matches a UNIQUE graph person (i.e. name alone disambiguates).
-            if true_matches:
-                detections += 1
-                if is_in_graph:
-                    correct_detections += 1
-            # only judge neighbours for entries whose subject is in the graph
-            # (an unmatched subject has no entry to place neighbours into)
-            if true_matches:
-                for nb in listed:
-                    listed_neighbours += 1
-                    cands = graph.match(nb, threshold)
-                    if len(cands) >= 1:
-                        existing_neighbours += 1
-                        if len(cands) == 1:   # unambiguous by name alone
-                            confirmed_neighbours += 1
-                            confirmed_existing += 1
+    from engine import (TokenInfo, tokenize_with_positions, ArabicEngine,
+                        PUNCTUATION_CHARS)
+    shell = ArabicEngine.__new__(ArabicEngine)          # no model loading
+    tokens = [TokenInfo(word=w, start=s, end=e)
+              for w, s, e in tokenize_with_positions(clean_text)]
+    word_idx = []
+    for i, t in enumerate(tokens):
+        if t.word in PUNCTUATION_CHARS:
+            t.is_punct = True
+        elif t.word.isdigit():
+            t.is_number = True
         else:
-            # WITH-GRAPH: choose the candidate person whose graph neighbours
-            # best explain the entry's listed teachers/students, then a listed
-            # neighbour is recovered iff it is a graph-neighbour of that person.
-            best_pid, best_conf = None, -1
-            for pid, _s in true_matches:
-                conf = sum(1 for nb in listed
-                           if neighbour_matches(nb, pid, graph, threshold))
-                if conf > best_conf:
-                    best_pid, best_conf = pid, conf
-            if true_matches:
-                detections += 1
-                if is_in_graph:
-                    correct_detections += 1
-                for nb in listed:
-                    listed_neighbours += 1
-                    exists = len(graph.match(nb, threshold)) >= 1
-                    if exists:
-                        existing_neighbours += 1
-                        if best_pid is not None and \
-                                neighbour_matches(nb, best_pid, graph, threshold):
-                            confirmed_neighbours += 1
-                            confirmed_existing += 1
+            word_idx.append(i)
+    for i in word_idx:
+        shell._apply_lexicon_flags(tokens[i])
+        if tokens[i].is_nrc or tokens[i].is_nmc or tokens[i].is_rasoul:
+            tokens[i].is_name = False
+    shell._apply_phrase_flags(clean_text, tokens)
+    shell._apply_context_name_rule(tokens)
+    return tokens
 
-    def ratio(a, b):
-        return round(a / b, 3) if b else 0.0
 
+# ===========================================================================
+# 2. One condition
+# ===========================================================================
+
+def run_condition(tokens, graph_index, bio_params, det_params):
+    """
+    graph_index=None -> the paper's no-graph baseline.
+    Returns (mentions, detected, fsm, detector).
+    """
+    confirm = graph_index.confirm if graph_index is not None else None
+    fsm = BiographyFSM(bio_params, confirm=confirm)
+    mentions = fsm.run(tokens)
+    detector = BiographyDetector(mentions, graph_index, det_params) \
+        if graph_index is not None else None
+    detected = detector.detect() if detector else []
+    return mentions, detected, fsm, detector
+
+
+def as_predictions(detected, mentions):
+    """Detected entries -> TwoLevelItem, the shape the scorer consumes."""
+    return [TwoLevelItem(main=(b.start, b.end),
+                         names=[(mentions[i].start, mentions[i].end)
+                                for i in b.mention_indices])
+            for b in detected]
+
+
+def describe(label, mentions, detected, fsm):
+    runs = len(getattr(fsm, "candidates", []))
     return {
-        "detections": detections,
-        "correct_detections": correct_detections,
-        "in_graph_subjects": in_graph_total,
-        "detect_recall": ratio(correct_detections, in_graph_total),
-        "detect_precision": ratio(correct_detections, detections),
-        "listed_neighbours": listed_neighbours,
-        "confirmed_neighbours": confirmed_neighbours,
-        "boundary_recall": ratio(confirmed_neighbours, listed_neighbours),
-        "existing_neighbours": existing_neighbours,
-        "confirmed_existing": confirmed_existing,
-        "boundary_recall_fair": ratio(confirmed_existing, existing_neighbours),
+        "condition": label,
+        "mentions": len(mentions),
+        "confirmed_mentions": sum(1 for m in mentions if m.confirmed),
+        "narrator_runs": runs,
+        "runs_ended_by_budget": fsm.stats.get("runs_ended_by_budget", 0),
+        "entries_detected": len(detected),
+        "avg_entry_chars": (round(sum(b.end - b.start for b in detected)
+                                  / len(detected)) if detected else 0),
     }
 
 
 # ===========================================================================
-# 4. Main — run both methods and print the Table-2-style comparison
+# 3. Main
 # ===========================================================================
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Biography linking + Table-2 cross-document evaluation")
-    ap.add_argument("book_or_entries", help="rijal .txt OR <book>.entries.json")
-    ap.add_argument("graph_json", help="<book>.graph.json from run_graph/merge")
-    ap.add_argument("--threshold", type=float, default=0.1)
+        description="Cross-document biography experiment (paper Table 2)")
+    ap.add_argument("rijal_txt", help="raw rijal book, e.g. khoei.txt")
+    ap.add_argument("graph_json", help="<book>.graph.json from run_graph.py")
+    ap.add_argument("--gold", default=None,
+                    help="reviewed gold JSON; omit to write a seed and stop")
+    ap.add_argument("--k", type=int, default=1,
+                    help="k-reachable radius (1 = the old system's hardcoded value)")
+    ap.add_argument("--near", type=int, default=100,
+                    help="areNear window in characters (old bio_nrc_max)")
+    ap.add_argument("--bio-threshold", type=float, default=2.0,
+                    help="min confirmed neighbours for an entry (old bio_threshold)")
+    ap.add_argument("--sequential", action="store_true",
+                    help="enable sequential disambiguation (OUR addition, "
+                         "absent from the original)")
+    ap.add_argument("--lexicon-only", action="store_true",
+                    help="skip CAMeL/Wojood — smoke test only, not reportable")
+    ap.add_argument("--no-wojood", action="store_true")
     ap.add_argument("--out", default="biography_eval.json")
     args = ap.parse_args()
 
-    epath, gpath = Path(args.book_or_entries), Path(args.graph_json)
-    for p in (epath, gpath):
+    rijal, gpath = Path(args.rijal_txt), Path(args.graph_json)
+    for p in (rijal, gpath):
         if not p.exists():
             sys.exit(f"file not found: {p}")
 
-    entries = load_entries(epath)
-    graph = Graph(json.load(open(gpath, encoding="utf-8"))["persons"])
-    measurable = [e for e in entries
-                  if (e.teachers or e.students) and not e.is_reference]
+    clean_text, _index_map = normalize(rijal.read_text(encoding="utf-8"))
+    index = GraphIndex.load(gpath)
 
-    print(f"graph persons : {len(graph.persons):,}")
-    print(f"entries       : {len(entries):,}  "
-          f"(measurable: {len(measurable):,})")
+    if index.stats()["persons_reparsed_from_string"]:
+        print("! this graph predates canonical-form serialization; regenerate "
+              "it with run_graph.py for exact matching\n")
+
+    print(f"book          : {rijal.name}  ({len(clean_text):,} clean chars)")
+    print(f"graph         : {gpath.name}  "
+          f"({index.stats()['persons']:,} persons, "
+          f"threshold {index.threshold})")
+    if args.lexicon_only:
+        print("mode          : LEXICON-ONLY — smoke test, results not reportable")
     print()
 
-    base = evaluate(entries, graph, use_graph=False, threshold=args.threshold)
-    cross = evaluate(entries, graph, use_graph=True, threshold=args.threshold)
+    tokens = analyze_text(clean_text, use_wojood=not args.no_wojood,
+                          lexicon_only=args.lexicon_only)
+    print(f"tokens        : {len(tokens):,}\n")
 
-    # ---- Table 2 style output ----
-    print("=" * 62)
-    print("TABLE 2 (reproduction on Kafi x Khoei) — graph's contribution")
-    print("=" * 62)
-    print(f"{'':<26}{'NO-GRAPH':>16}{'WITH-GRAPH':>16}")
-    print("-" * 62)
-    print("Narrator detection")
-    print(f"{'  recall':<26}{base['detect_recall']:>16}"
-          f"{cross['detect_recall']:>16}")
-    print(f"{'  precision':<26}{base['detect_precision']:>16}"
-          f"{cross['detect_precision']:>16}")
-    print("Boundary / neighbour recall  (the paper's 41% -> 93%)")
-    print(f"{'  recall (all listed)':<26}{base['boundary_recall']:>16}"
-          f"{cross['boundary_recall']:>16}")
-    print(f"{'  recall (in-graph only)*':<26}{base['boundary_recall_fair']:>16}"
-          f"{cross['boundary_recall_fair']:>16}")
-    print("-" * 62)
-    print(f"{'listed neighbours':<26}{base['listed_neighbours']:>16}"
-          f"{cross['listed_neighbours']:>16}")
-    print(f"{'  of which in the graph':<26}{base['existing_neighbours']:>16}"
-          f"{cross['existing_neighbours']:>16}")
-    print(f"{'confirmed (in-graph)':<26}{base['confirmed_existing']:>16}"
-          f"{cross['confirmed_existing']:>16}")
-    print("=" * 62)
-    print("* in-graph-only = fair measure: neighbours that exist in the graph")
-    print("  at all (others come from books not ingested, unconfirmable by any")
-    print("  method). This isolates the graph's disambiguation contribution.")
+    bio_params = BioParams()
+    det_params = BiographyParams(near_max_chars=args.near,
+                                 threshold=args.bio_threshold, k=args.k,
+                                 sequential_disambiguation=args.sequential)
 
-    gain = cross["boundary_recall_fair"] - base["boundary_recall_fair"]
-    print(f"\nboundary-recall gain from the graph (in-graph, fair): "
-          f"+{gain:.3f}  "
-          f"({base['boundary_recall_fair']:.0%} -> "
-          f"{cross['boundary_recall_fair']:.0%})")
+    ng_m, ng_d, ng_f, _ = run_condition(tokens, None, bio_params, det_params)
+    wg_m, wg_d, wg_f, wg_det = run_condition(tokens, index, bio_params,
+                                             det_params)
 
-    json.dump({"no_graph": base, "with_graph": cross},
-              open(args.out, "w", encoding="utf-8"),
-              ensure_ascii=False, indent=2)
+    ng_desc, wg_desc = (describe("no-graph", ng_m, ng_d, ng_f),
+                        describe("with-graph", wg_m, wg_d, wg_f))
+
+    print("=" * 64)
+    print("PIPELINE — same automaton, one switch")
+    print("=" * 64)
+    print(f"{'':<28}{'NO-GRAPH':>17}{'WITH-GRAPH':>17}")
+    print("-" * 64)
+    for key, label in (("mentions", "narrator mentions"),
+                       ("confirmed_mentions", "  confirmed by graph"),
+                       ("narrator_runs", "narrator runs"),
+                       ("runs_ended_by_budget", "  ended by budget"),
+                       ("entries_detected", "entries detected"),
+                       ("avg_entry_chars", "  avg entry chars")):
+        print(f"{label:<28}{ng_desc[key]:>17}{wg_desc[key]:>17}")
+    print("=" * 64)
+    if wg_det:
+        print("disambiguation:", wg_det.disambiguation_stats)
+    print()
+
+    # ---------------------------------------------------------------- gold
+    if not args.gold:
+        seed_path = rijal.with_suffix("").with_suffix(".bio.gold.seed.json")
+        bootstrap_from_biographies(wg_d, wg_m, clean_text,
+                                   source=rijal.name).save(seed_path)
+        print("NO GOLD GIVEN -> no statistics produced.")
+        print(f"A seed was written from this run's own output:\n    {seed_path}")
+        print("Correct the spans, set \"reviewed\": true, then re-run with")
+        print(f"    --gold {seed_path.name}")
+        print("\nScoring against an uncorrected seed would compare the system")
+        print("to itself — which is exactly what the deleted boundary_gold.py did.")
+        return 0
+
+    try:
+        gold = load_for_scoring(args.gold, clean_text)
+    except GoldError as exc:
+        sys.exit(f"\n{exc}")
+
+    problems = validate(gold, clean_text)
+    if problems:
+        print(f"! {len(problems)} problem(s) in the gold file:")
+        for p in problems[:5]:
+            print("   -", p)
+        print()
+
+    gold_items = gold.to_items()
+    ng_score = score(gold_items, as_predictions(ng_d, ng_m), clean_text)
+    wg_score = score(gold_items, as_predictions(wg_d, wg_m), clean_text)
+
+    print(format_report(ng_score, "NO-GRAPH (paper's baseline)"))
+    print()
+    print(format_report(wg_score, "WITH-GRAPH (cross-document)"))
+    print()
+    print("=" * 64)
+    print("TABLE 2 — the graph's contribution")
+    print("=" * 64)
+    print(f"{'':<24}{'NO-GRAPH':>19}{'WITH-GRAPH':>19}")
+    print("-" * 64)
+    for key, label in (("detection", "narrator detection"),
+                       ("boundary_min", "boundary (min)"),
+                       ("boundary_max", "boundary (max)")):
+        for metric in ("recall", "precision"):
+            print(f"{'  ' + label + ' ' + metric:<24}"
+                  f"{ng_score[key][metric]:>19}{wg_score[key][metric]:>19}")
+    print("=" * 64)
+    delta = (wg_score["boundary_max"]["recall"]
+             - ng_score["boundary_max"]["recall"])
+    print(f"boundary-recall change from the graph: {delta:+.3f}")
+    print("(the paper reports 0.41 -> 0.93 on its own books and gold)")
+
+    Path(args.out).write_text(json.dumps(
+        {"pipeline": {"no_graph": ng_desc, "with_graph": wg_desc},
+         "scores": {"no_graph": ng_score, "with_graph": wg_score},
+         "gold": gold.stats()}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
     print(f"\nsaved: {args.out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
