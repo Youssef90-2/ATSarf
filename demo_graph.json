@@ -1,0 +1,195 @@
+{
+ "params": {
+  "equality_threshold": 0.1,
+  "equality_radius": 3,
+  "qualifiers_mode": "off",
+  "break_cycles": true
+ },
+ "persons": [
+  {
+   "id": 0,
+   "primary_name": "محمد بن يعقوب الكليني",
+   "names": [
+    "محمد بن يعقوب",
+    "محمد بن يعقوب الكليني"
+   ],
+   "rank": 2,
+   "is_rasoul": false,
+   "occurrences": 2,
+   "groups": [
+    {
+     "name": "محمد بن يعقوب",
+     "key": "محمد-يعقوب",
+     "size": 1,
+     "levels": [
+      [
+       [
+        "محمد",
+        "name"
+       ]
+      ],
+      [
+       [
+        "يعقوب",
+        "name"
+       ]
+      ]
+     ],
+     "qualifiers": [],
+     "is_rasoul": false,
+     "is_relative": false
+    },
+    {
+     "name": "محمد بن يعقوب الكليني",
+     "key": "محمد-يعقوب:الكليني",
+     "size": 1,
+     "levels": [
+      [
+       [
+        "محمد",
+        "name"
+       ]
+      ],
+      [
+       [
+        "يعقوب",
+        "name"
+       ]
+      ]
+     ],
+     "qualifiers": [
+      "الكليني"
+     ],
+     "is_rasoul": false,
+     "is_relative": false
+    }
+   ],
+   "parents": [
+    1,
+    3
+   ],
+   "children": [],
+   "biography_refs": []
+  },
+  {
+   "id": 1,
+   "primary_name": "علي بن ابراهيم",
+   "names": [
+    "علي بن ابراهيم"
+   ],
+   "rank": 1,
+   "is_rasoul": false,
+   "occurrences": 1,
+   "groups": [
+    {
+     "name": "علي بن ابراهيم",
+     "key": "علي-ابراهيم",
+     "size": 1,
+     "levels": [
+      [
+       [
+        "علي",
+        "name"
+       ]
+      ],
+      [
+       [
+        "ابراهيم",
+        "name"
+       ]
+      ]
+     ],
+     "qualifiers": [],
+     "is_rasoul": false,
+     "is_relative": false
+    }
+   ],
+   "parents": [
+    2
+   ],
+   "children": [
+    0
+   ],
+   "biography_refs": []
+  },
+  {
+   "id": 2,
+   "primary_name": "ابي جعفر",
+   "names": [
+    "ابي جعفر"
+   ],
+   "rank": 0,
+   "is_rasoul": true,
+   "occurrences": 2,
+   "groups": [
+    {
+     "name": "ابي جعفر",
+     "key": "<RASOUL>",
+     "size": 2,
+     "levels": [
+      [
+       [
+        "ابي",
+        "AB"
+       ],
+       [
+        "جعفر",
+        "name"
+       ]
+      ]
+     ],
+     "qualifiers": [],
+     "is_rasoul": true,
+     "is_relative": false
+    }
+   ],
+   "parents": [],
+   "children": [
+    1,
+    3
+   ],
+   "biography_refs": []
+  },
+  {
+   "id": 3,
+   "primary_name": "احمد بن محمد",
+   "names": [
+    "احمد بن محمد"
+   ],
+   "rank": 1,
+   "is_rasoul": false,
+   "occurrences": 1,
+   "groups": [
+    {
+     "name": "احمد بن محمد",
+     "key": "احمد-محمد",
+     "size": 1,
+     "levels": [
+      [
+       [
+        "احمد",
+        "name"
+       ]
+      ],
+      [
+       [
+        "محمد",
+        "name"
+       ]
+      ]
+     ],
+     "qualifiers": [],
+     "is_rasoul": false,
+     "is_relative": false
+    }
+   ],
+   "parents": [
+    2
+   ],
+   "children": [
+    0
+   ],
+   "biography_refs": []
+  }
+ ]
+}

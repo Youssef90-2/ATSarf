@@ -49,15 +49,25 @@ class NarratorGraph:
         self.persons = self._builder.build(chains)
         self.chain_nodes = self._builder.chain_nodes
 
-        # 2. break cycles (a real isnad graph must be a DAG)
+        # 2. edges must exist BEFORE cycle detection can run
+        self._rebuild_edges(chains)
+
+        # 3. break cycles (a real isnad graph must be a DAG).
+        #    The breaker rebuilds edges after every split through this
+        #    callback — previously the rebuild happened only ONCE, after the
+        #    whole loop, which silently undid every change the breaker made
+        #    and left the graph exactly as cyclic as it started.
         cycles_broken = 0
+        self._remaining_cycles = 0
         if self.break_cycles:
             breaker = CycleBreaker(self.persons, self.chain_nodes,
                                    base_threshold=self.params.equality_threshold,
-                                   delta=self.delta)
+                                   delta=self.delta,
+                                   equality_radius=self.params.equality_radius,
+                                   rebuild_edges=lambda: self._rebuild_edges(chains))
             cycles_broken = breaker.break_cycles()
-            # 3. a split may have moved occurrences -> rebuild edges cleanly
-            self._rebuild_edges(chains)
+            self._remaining_cycles = breaker.remaining_cycles()
+            self._breaker_stats = breaker.stats
 
         # 4. ranks (generation from the Prophet/Imam)
         self._compute_ranks()
@@ -97,54 +107,86 @@ class NarratorGraph:
         """
         Generation = distance from the SOURCE of narration.
         rank 0 = the source (the Prophet / an Imam), rank 1 = whoever heard
-        from them, and so on.
+        from them, and so on. `parents` are teachers (earlier), `children`
+        are students (later), so rank increases along every edge.
 
-        IMPORTANT (discovered on real kafi1 data): we cannot rely on the
-        `is_rasoul` flag alone — Part 1 only sets it when an honorific
-        (عليه السلام) sits next to the name, so many Imam mentions are
-        missed (e.g. 'ابي عبد الله' had is_rasoul=False yet 201 students).
+        LONGEST path, not shortest: rank(n) = 1 + max(rank of its parents).
+        The property that matters is MONOTONICITY — every edge must go from a
+        lower rank to a higher one, or "generation" means nothing and the
+        teacher/student direction cannot be read off it. A shortest-path BFS
+        (the previous implementation) breaks that: a node reachable by both a
+        1-hop and a 4-hop route takes rank 1, so the 4-hop edge runs backwards.
+        Its -1 fallback then used min(parent_ranks), making it worse.
 
-        So sources are detected STRUCTURALLY:
-            - any node flagged rasoul, OR
-            - any node with no parents (nothing it narrated from) — it sits
-              at the far end of every chain it appears in.
-        BFS then walks 'children' (source -> student) assigning rank+1.
+        Relation to the old code: RankCorrectorNodeVisitor (graph.h:498) is
+        also a longest-path relaxation — `if (rank1 >= rank2) rank2 = rank1+1`
+        — but run as exactly TWO BFS passes, which under-converges on a graph
+        deeper than two levels. We run a proper topological relaxation
+        instead. (In the old system rank only drove graphviz layout, so the
+        under-convergence never mattered there; here it feeds the biography
+        stage, so it does.)
+
+        Cycles: nodes inside a surviving cycle have no topological position.
+        They get a bounded relaxation afterwards — capped, because a cycle
+        would otherwise raise its own ranks forever.
         """
-        for p in self.persons.values():
-            p.rank = -1
+        persons = self.persons
+        for p in persons.values():
+            p.rank = 0
 
-        queue = deque()
-        for pid, p in self.persons.items():
-            is_source = p.is_rasoul or len(p.parents) == 0
-            if is_source:
-                p.rank = 0
-                queue.append(pid)
+        # Kahn over parent->child edges; in-degree = number of parents
+        indegree = {pid: sum(1 for q in p.parents if q in persons)
+                    for pid, p in persons.items()}
+        queue = deque(pid for pid, d in indegree.items() if d == 0)
 
         while queue:
             pid = queue.popleft()
-            current_rank = self.persons[pid].rank
-            for child in self.persons[pid].children:
-                child_node = self.persons.get(child)
-                if child_node and child_node.rank == -1:
-                    child_node.rank = current_rank + 1
+            rank = persons[pid].rank
+            for child in persons[pid].children:
+                if child not in persons:
+                    continue
+                if persons[child].rank < rank + 1:
+                    persons[child].rank = rank + 1      # longest path
+                indegree[child] -= 1
+                if indegree[child] == 0:
                     queue.append(child)
 
-        # any node still -1 sits inside a cycle-free but unreachable part;
-        # give it the rank of its lowest-ranked parent + 1 (best effort)
-        for _ in range(3):
-            for p in self.persons.values():
-                if p.rank != -1:
-                    continue
-                parent_ranks = [self.persons[x].rank for x in p.parents
-                                if x in self.persons
-                                and self.persons[x].rank != -1]
-                if parent_ranks:
-                    p.rank = min(parent_ranks) + 1
+        # whatever is left sits on a cycle: relax a bounded number of times
+        leftover = [pid for pid, d in indegree.items() if d > 0]
+        for _ in range(min(len(leftover), 10)):
+            changed = False
+            for pid in leftover:
+                parent_ranks = [persons[q].rank for q in persons[pid].parents
+                                if q in persons]
+                if parent_ranks and persons[pid].rank < max(parent_ranks) + 1:
+                    persons[pid].rank = max(parent_ranks) + 1
+                    changed = True
+            if not changed:
+                break
+        self._cyclic_persons = len(leftover)
+
+    def rank_violations(self) -> int:
+        """
+        Edges where rank does not increase (rank(child) <= rank(parent)).
+        Zero on the acyclic part; a non-zero count is exactly the number of
+        edges trapped in surviving cycles.
+        """
+        bad = 0
+        for p in self.persons.values():
+            for child in p.children:
+                c = self.persons.get(child)
+                if c is not None and c.rank <= p.rank:
+                    bad += 1
+        return bad
 
     # --------------------------------------------------------- stats
     def stats(self):
         s = self._builder.stats() if self._builder else {}
         s["cycles_broken"] = getattr(self, "_cycles_broken", 0)
+        s["remaining_cycles"] = getattr(self, "_remaining_cycles", 0)
+        s["cyclic_persons"] = getattr(self, "_cyclic_persons", 0)
+        s["rank_violations"] = self.rank_violations()
+        s.update(getattr(self, "_breaker_stats", {}))
         ranked = [p for p in self.persons.values() if p.rank >= 0]
         s["ranked_persons"] = len(ranked)
         s["max_rank"] = max((p.rank for p in ranked), default=-1)

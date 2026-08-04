@@ -22,16 +22,34 @@ Old source (verified): Narrator::preProcessForEquality()
     - a name word  -> append to the CURRENT level
     - بن / ابن     -> start a NEW level (j++)
     - possessive (nisba الكوفي) -> goes to the SEPARATE qualifiers list
-    - family connector (عمه/جده) -> stays in the current level
-    - anything else (ابو/ابي kunya OTHER) -> ignored for leveling
+    - family connector -> stays in the current level. CRUCIAL: the old
+      isFamilyConnector() (narrator_abstraction.h:152) returns true for
+      IBN | AB | OM | FAMILY_OTHER, so the kunya connectors ابو/ابي/ام
+      ARE kept in the level. getKey then writes them as the literals
+      "AB" / "OM" (narratorHash.h:78-85) so that the case variants
+      ابو/ابي/ابا all collapse to one token.
+    - ConnectorType.OTHER -> ignored (old: isOther() -> do nothing)
+
+  A previous version of this file dropped AB/OM entirely, which made
+  'ابو جعفر' == 'جعفر' and 'ابن ابي عمير' == 'عمير' (both scored 1.0) and
+  mishandled the Imams (ابي عبد الله, 346 occurrences). Fixed here.
 
 --------------------------------------------------------------------------
 INPUT:  a Narrator (from Part 1's models.py) OR a plain name string.
-OUTPUT: a CanonicalName with .levels (list of lists) and .qualifiers.
+OUTPUT: a CanonicalName whose .levels hold LevelItem entries (text + kind),
+        plus .qualifiers.
+
+WHY LevelItem AND NOT PLAIN STRINGS: the old equality rule needs to know
+whether a level slot is a NAME or a CONNECTOR. equalNew
+(narrator_abstraction.cpp:636) skips a slot only when BOTH sides are
+connectors (so ابو vs ابي is tolerated), but hard-rejects when a connector
+faces a name (so ابو جعفر vs جعفر is a mismatch). That distinction is
+impossible with bare strings.
 --------------------------------------------------------------------------
 """
 
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from normalization import normalize_word
 from models import ConnectorType
@@ -42,17 +60,47 @@ import lexicons
 _ALEFS = {"ا", "أ", "إ", "آ", "ى"}
 
 
-def _norm_first_letter(word: str) -> str:
+def norm_first_letter(word: str) -> str:
     """Normalize a leading alef variant to bare alef (old equality rule)."""
     if word and word[0] in _ALEFS:
         return "ا" + word[1:]
     return word
 
 
+# ---- kinds a level slot can hold (old NameConnectorPrim::Type, minus POS
+#      which goes to qualifiers, and minus IBN which opens a new level) ----
+NAME = "name"
+AB = "AB"        # ابو / ابي / ابا   -> key literal "AB"  (narratorHash.h:82)
+OM = "OM"        # ام                -> key literal "OM"  (narratorHash.h:84)
+FAMILY = "family"  # عمه / جده / خاله -> key uses its own text
+
+
+class LevelItem(NamedTuple):
+    """One slot inside a name level: a name word or a family connector."""
+    text: str
+    kind: str = NAME
+
+    @property
+    def is_name(self) -> bool:
+        return self.kind == NAME
+
+    @property
+    def key_token(self) -> str:
+        """What getKey() writes for this slot (narratorHash.h:78-95)."""
+        if self.kind == AB:
+            return "AB"
+        if self.kind == OM:
+            return "OM"
+        return self.text
+
+    def __repr__(self):
+        return self.text if self.is_name else f"<{self.key_token}>"
+
+
 @dataclass
 class CanonicalName:
     """A narrator name split for comparison."""
-    levels: list = field(default_factory=list)   # list[list[str]] name words
+    levels: list = field(default_factory=list)   # list[list[LevelItem]]
     qualifiers: list = field(default_factory=list)  # nisba/family qualifiers
     is_rasoul: bool = False
     is_relative: bool = False
@@ -63,7 +111,7 @@ class CanonicalName:
         return len(self.levels)
 
     def __repr__(self):
-        lv = " | ".join("+".join(l) for l in self.levels)
+        lv = " | ".join("+".join(repr(it) for it in l) for l in self.levels)
         q = (" {" + ",".join(self.qualifiers) + "}") if self.qualifiers else ""
         tag = " <rasoul>" if self.is_rasoul else (
               " <relative>" if self.is_relative else "")
@@ -76,10 +124,11 @@ def canonize(narrator) -> CanonicalName:
 
     Follows preProcessForEquality exactly:
         - start with one empty level
-        - name word  -> current level
-        - IBN (بن)   -> open a new level
+        - name word    -> current level
+        - IBN (بن)     -> open a new level
         - possessive/nisba -> qualifiers
-        - family (عمه) -> current level
+        - AB/OM/family -> current level (all are isFamilyConnector())
+        - OTHER        -> ignored
     """
     result = CanonicalName(levels=[[]], raw=narrator.full_name)
     result.is_rasoul = narrator.is_rasoul
@@ -96,20 +145,46 @@ def canonize(narrator) -> CanonicalName:
 
         if not is_connector:
             # a name word -> current (last) level
-            result.levels[-1].append(_norm_first_letter(text))
+            result.levels[-1].append(LevelItem(norm_first_letter(text), NAME))
         else:
             if part.is_ibn:                     # بن / ابن -> new level
                 result.levels.append([])
+            elif part.is_ab:                    # ابو/ابي/ابا -> level, as "AB"
+                result.levels[-1].append(LevelItem(text, AB))
+            elif part.is_om:                    # ام -> level, as "OM"
+                result.levels[-1].append(LevelItem(text, OM))
             elif part.kind == ConnectorType.POSSESSIVE or _is_possessive(text):
                 result.qualifiers.append(text)  # nisba -> qualifiers
             elif _is_family(part, text):        # عمه/جده -> current level
-                result.levels[-1].append(_norm_first_letter(text))
-            # kunya (ابو/ابي) and others: ignored for leveling (old code)
+                result.levels[-1].append(
+                    LevelItem(norm_first_letter(text), FAMILY))
+            # ConnectorType.OTHER: ignored for leveling (old isOther())
 
-    # drop empty trailing level (if name ended on a بن)
-    result.levels = [lv for lv in result.levels if lv] or [[]]
+    # Drop ONLY trailing empty levels (a name ending on a بن). A LEADING empty
+    # level is meaningful: it means the first name is unknown ('ابن ابي عمير'),
+    # which getKey encodes as a leading '-' and isFirstNameAmbiguous
+    # (narratorHash.h:127) keys off. Stripping it made every such name
+    # indistinguishable from a plain given name.
+    while len(result.levels) > 1 and not result.levels[-1]:
+        result.levels.pop()
     result.qualifiers.sort()                    # old: qSort(possessives)
     return result
+
+
+def canonical_from_dict(d: dict) -> CanonicalName:
+    """
+    Rebuild a CanonicalName from GroupNode.to_dict(). Exact — no re-parsing
+    of the name string, so a graph loaded from disk compares identically to
+    the one that was built in memory.
+    """
+    return CanonicalName(
+        levels=[[LevelItem(text, kind) for text, kind in level]
+                for level in d.get("levels", [])] or [[]],
+        qualifiers=list(d.get("qualifiers", [])),
+        is_rasoul=bool(d.get("is_rasoul")),
+        is_relative=bool(d.get("is_relative")),
+        raw=d.get("name", ""),
+    )
 
 
 def canonize_string(name: str) -> CanonicalName:

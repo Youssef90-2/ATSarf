@@ -63,11 +63,17 @@ def sanad_signals(hadith: dict):
     needs no re-analysis.
     """
     narrators = hadith.get("sanad", {}).get("narrators", [])
-    words = " ".join(n.get("name", "") for n in narrators).split()
+    joined = " ".join(n.get("name", "") for n in narrators)
+    words = joined.split()
 
     has_ibn = any(lexicons.is_ibn_word(w) for w in words)
+    # `is_rasoul` now marks only references to the Prophet HIMSELF, so an
+    # honorific ending (ابي عبد الله عليه السلام) no longer sets it. Detect
+    # the honorific as a PHRASE — not word by word, because 'الله' alone is a
+    # component of ordinary names (عبد الله) and would match everything.
     has_rasoul = (any(n.get("is_rasoul") for n in narrators)
-                  or any(lexicons.is_rasoul_word(w) for w in words))
+                  or any(lexicons.is_rasoul_word(w) for w in words)
+                  or any(p in joined for p in lexicons.HONORIFIC_PHRASES))
     # narration word appearing inside a narrator name (عن/حدثنا that the FSM
     # folded into a name rather than storing as a connector)
     has_nrc = any(lexicons.is_nrc_word(w) for w in words)

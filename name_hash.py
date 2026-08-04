@@ -55,8 +55,12 @@ def _build_key(levels, qualifiers, size, with_nisba, skip_first) -> str:
     for i in range(size):
         if skip_first and i == 0:
             level_str = ""                 # skipped -> becomes "-"
+        elif i < len(levels):
+            # key_token writes "AB"/"OM" for kunya connectors, the plain text
+            # otherwise — exactly getKey() (narratorHash.h:78-95)
+            level_str = " ".join(it.key_token for it in levels[i])
         else:
-            level_str = " ".join(levels[i]) if i < len(levels) else ""
+            level_str = ""
         parts.append(level_str)
 
     key = "-".join(parts)
@@ -70,6 +74,22 @@ def _build_key(levels, qualifiers, size, with_nisba, skip_first) -> str:
 # 2. Enumerate ALL keys for a narrator, each with its relevance score
 #    (port of generateAllPossibilities: narratorHash.h:259)
 # ===========================================================================
+
+def primary_key(c: CanonicalName) -> str:
+    """
+    The EXACT key of a narrator — all levels, with nisba, nothing skipped.
+    Old: Narrator::getKey() (narrator_abstraction.cpp:680), which is
+    getKey(names, possessives, names.size(), true, false).
+
+    Two occurrences sharing this key are the same written name, so they form
+    one atomic GroupNode.
+    """
+    if c.is_relative:
+        return "<REL>"
+    if c.is_rasoul:
+        return "<RASOUL>"
+    return _build_key(c.levels, c.qualifiers, len(c.levels), True, False)
+
 
 def generate_keys(c: CanonicalName):
     """

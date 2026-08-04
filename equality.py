@@ -33,7 +33,7 @@ Also provided: edit_distance_score() — the "eNarrator" related-work
 baseline (Levenshtein, paper's comparison target, old threshold 0.75).
 """
 
-from name_model import canonize, CanonicalName
+from name_model import canonize, CanonicalName, norm_first_letter
 
 
 # ===========================================================================
@@ -78,21 +78,26 @@ def narrator_distance(c1: CanonicalName, c2: CanonicalName,
 
     levels_equal = 0
     for i in range(level_min):
-        words1, words2 = levels1[i], levels2[i]
-        name_min = min(len(words1), len(words2))
+        items1, items2 = levels1[i], levels2[i]
+        name_min = min(len(items1), len(items2))
 
-        # compare overlapping name words at this level
-        differed = False
+        # Compare overlapping slots at this level, mirroring equalNew
+        # (narrator_abstraction.cpp:636): a slot pair is SKIPPED only when
+        # both sides are connectors -- that is what lets ابو/ابي/ابا vary
+        # freely. A connector facing a name is a real mismatch.
         compared_any = False
         for j in range(name_min):
-            compared_any = True
-            if words1[j] != words2[j]:           # already alef-normalized
+            a, b = items1[j], items2[j]
+            if not a.is_name and not b.is_name:
+                continue                         # both connectors -> skip
+            if norm_first_letter(a.text) != norm_first_letter(b.text):
                 return 0.0                       # HARD reject (paper's ∞)
+            compared_any = True
         # both empty at this level counts as equal (old code)
-        if len(words1) == 0 and len(words2) == 0:
+        if len(items1) == 0 and len(items2) == 0:
             compared_any = True
 
-        if compared_any and not differed:
+        if compared_any:
             levels_equal += 1
 
     score = levels_equal / level_max

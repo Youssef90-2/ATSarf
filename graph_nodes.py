@@ -11,22 +11,34 @@ hierarchy, simplified):
                          (محمد بن يعقوب as it appears in chain #5)
                          Many occurrences of the same person exist.
 
-    GraphNarratorNode  — one UNIQUE person after merging.
-                         Holds edges (who they narrated from / to) and a
-                         `rank` = generation (distance from Prophet/Imam).
+    GroupNode          — all occurrences sharing an IDENTICAL canonical key.
+                         ATOMIC: its members are literally the same name, so
+                         a group is never split. This is what the hash
+                         indexes and what merge/split operate on.
 
-    GroupNode          — groups equivalent GraphNarratorNodes together;
-                         this is what the hash indexes and what merging
-                         operates on.
+    GraphNarratorNode  — one UNIQUE person = a set of GroupNodes fused by the
+                         fuzzy equality metric. Holds edges (who they narrated
+                         from / to) and a `rank` = generation.
 
 Paper mapping (§2 "Merge/Split"): merge removes two nodes and adds one with
 their combined edges; split reverses it. Edges = the "narrated from"
 relation R in the graph G = <N, R>.
 
 --------------------------------------------------------------------------
-Simplification vs the old C++: we use plain Python objects with sets of
-neighbor ids instead of pointer webs — easier to read, serialize (JSON),
-and reason about. Same information, cleaner shape.
+WHY THE MIDDLE LEVEL EXISTS (old graph_nodes.h, restored here):
+Split is defined as  m(n1..nk) -> m1(n1..ni), m2(ni+1..nk).  It needs
+indivisible pieces to redistribute. GroupNodes are those pieces: because all
+their members share one exact key, no evidence can ever separate them, so
+LoopBreakingVisitor::reMergeNodes (graph.cpp:115) can dissolve a person into
+its groups and re-merge them at a stricter threshold — always terminating,
+always making a decision it can justify.
+
+Collapsing this to occurrence->person (the previous design) made split
+degenerate into "peel off one occurrence at a time", which could not undo a
+bad fusion and had no progress guarantee.
+--------------------------------------------------------------------------
+Simplification vs the old C++: plain Python objects with sets of neighbour
+ids instead of pointer webs — easier to read, serialize (JSON), reason about.
 --------------------------------------------------------------------------
 """
 
@@ -60,38 +72,166 @@ class ChainNarratorNode:
 
 
 # ===========================================================================
-# 2. GraphNarratorNode — one unique person (a graph node)
+# 2. GroupNode — occurrences sharing one exact key (the atomic merge unit)
 # ===========================================================================
 
-class GraphNarratorNode:
-    """One real person. Edges point to other GraphNarratorNodes by id."""
+class GroupNode:
+    """
+    All occurrences whose canonical key is IDENTICAL. Indivisible: since the
+    members are the same name, nothing can justify separating them.
 
-    def __init__(self, node_id):
-        self.id = node_id
-        self.occurrences = []          # ChainNarratorNode ids merged here
-        self.names = []                # distinct name strings seen
-        self.parents = set()           # narrated FROM these (teachers/earlier)
-        self.children = set()          # narrated TO these (students/later)
-        self.rank = -1                 # generation; distance from the Prophet
-        self.is_rasoul = False
-        # biography back-links (filled in Part 3 — cross-doc)
-        self.biography_refs = []
+    `person_id` is which GraphNarratorNode currently owns this group; split
+    changes that ownership, it never touches the group's contents.
+    """
 
-    def add_occurrence(self, chain_node: ChainNarratorNode):
-        self.occurrences.append(chain_node.id)
-        if chain_node.name not in self.names:
-            self.names.append(chain_node.name)
+    __slots__ = ("id", "key", "canonical", "occurrence_ids", "person_id",
+                 "name", "is_rasoul", "lowest", "highest", "chain_ids")
+
+    def __init__(self, group_id, key, chain_node: ChainNarratorNode):
+        self.id = group_id
+        self.key = key
+        self.canonical = chain_node.canonical
+        self.name = chain_node.name
+        self.occurrence_ids = [chain_node.id]
+        self.person_id = None
+        self.is_rasoul = bool(chain_node.narrator.is_rasoul)
+        # position span + chains, kept incrementally for the mustMerge guards
+        self.lowest = chain_node.position
+        self.highest = chain_node.position
+        self.chain_ids = {chain_node.chain_id}
+
+    def add(self, chain_node: ChainNarratorNode):
+        self.occurrence_ids.append(chain_node.id)
+        self.lowest = min(self.lowest, chain_node.position)
+        self.highest = max(self.highest, chain_node.position)
+        self.chain_ids.add(chain_node.chain_id)
         if chain_node.narrator.is_rasoul:
             self.is_rasoul = True
 
     @property
-    def primary_name(self):
-        """The longest name seen — usually the most complete form."""
-        return max(self.names, key=len) if self.names else ""
+    def size(self):
+        return len(self.occurrence_ids)
+
+    def to_dict(self):
+        """
+        Serialize the group WITH its CanonicalName.
+
+        Why the canonical form and not just the name string: the biography
+        stage matches a Narrator (carrying the FSM's real IBN/AB/POSSESSIVE
+        tags) against graph persons. If the graph side is reconstructed by
+        re-parsing a name string, the two sides can canonize differently and
+        a true match is silently missed. Storing the structure keeps the
+        comparison symmetric.
+        """
+        c = self.canonical
+        return {
+            "name": self.name,
+            "key": self.key,
+            "size": self.size,
+            "levels": [[[it.text, it.kind] for it in lv] for lv in c.levels],
+            "qualifiers": list(c.qualifiers),
+            "is_rasoul": c.is_rasoul,
+            "is_relative": c.is_relative,
+        }
+
+    def __repr__(self):
+        return f"Group(#{self.id} '{self.name}' x{self.size})"
+
+
+# ===========================================================================
+# 3. GraphNarratorNode — one unique person (a graph node)
+# ===========================================================================
+
+class GraphNarratorNode:
+    """
+    One real person = a set of GroupNodes fused by the equality metric.
+    Edges point to other GraphNarratorNodes by id.
+
+    `occurrences` / `names` / `is_rasoul` are DERIVED from the groups, so a
+    split only has to move groups around — the person's view stays consistent
+    automatically.
+    """
+
+    def __init__(self, node_id):
+        self.id = node_id
+        self.groups = []               # list[GroupNode]
+        self.parents = set()           # narrated FROM these (teachers/earlier)
+        self.children = set()          # narrated TO these (students/later)
+        self.rank = -1                 # generation; distance from the Prophet
+        # biography back-links (filled in Part 3 — cross-doc)
+        self.biography_refs = []
+
+    # ---------------------------------------------------------- composition
+    def add_group(self, group: GroupNode):
+        if group not in self.groups:
+            self.groups.append(group)
+        group.person_id = self.id
+
+    def remove_group(self, group: GroupNode):
+        if group in self.groups:
+            self.groups.remove(group)
+
+    def add_occurrence(self, chain_node: ChainNarratorNode):
+        """
+        Convenience for callers that have no key handy (demos, tests): wraps
+        the occurrence in a singleton group keyed by its own name.
+        """
+        for g in self.groups:
+            if g.name == chain_node.name:
+                g.add(chain_node)
+                return
+        self.add_group(GroupNode(-1, chain_node.name, chain_node))
+
+    # -------------------------------------------------------------- derived
+    @property
+    def occurrences(self):
+        return [oid for g in self.groups for oid in g.occurrence_ids]
 
     @property
     def occurrence_count(self):
-        return len(self.occurrences)
+        return sum(g.size for g in self.groups)
+
+    @property
+    def names(self):
+        """Distinct name forms, in the order the groups were fused."""
+        seen, out = set(), []
+        for g in self.groups:
+            if g.name not in seen:
+                seen.add(g.name)
+                out.append(g.name)
+        return out
+
+    @property
+    def is_rasoul(self):
+        return any(g.is_rasoul for g in self.groups)
+
+    @property
+    def lowest(self):
+        return min((g.lowest for g in self.groups), default=0)
+
+    @property
+    def highest(self):
+        return max((g.highest for g in self.groups), default=0)
+
+    @property
+    def chain_ids(self):
+        s = set()
+        for g in self.groups:
+            s |= g.chain_ids
+        return s
+
+    @property
+    def primary_name(self):
+        """
+        The name form seen MOST OFTEN (old: the group's key). Using the
+        LONGEST form instead — the previous behaviour — labelled a node with
+        its rarest variant, so an over-merged node ended up named after a
+        one-off spelling and was impossible to recognise in the output.
+        """
+        if not self.groups:
+            return ""
+        best = max(self.groups, key=lambda g: (g.size, len(g.name)))
+        return best.name
 
     def to_dict(self):
         return {
@@ -101,6 +241,7 @@ class GraphNarratorNode:
             "rank": self.rank,
             "is_rasoul": self.is_rasoul,
             "occurrences": self.occurrence_count,
+            "groups": [g.to_dict() for g in self.groups],
             "parents": sorted(self.parents),
             "children": sorted(self.children),
             "biography_refs": self.biography_refs,
@@ -108,32 +249,8 @@ class GraphNarratorNode:
 
     def __repr__(self):
         return (f"GraphNode(#{self.id} '{self.primary_name}' "
-                f"rank={self.rank} occ={self.occurrence_count})")
-
-
-# ===========================================================================
-# 3. GroupNode — a merge group (what the hash stores)
-# ===========================================================================
-
-class GroupNode:
-    """
-    Groups equivalent GraphNarratorNodes. In the simple design each group
-    holds exactly one GraphNarratorNode; the type exists so the merge/split
-    vocabulary matches the paper and the old code (and so Part 3's hash can
-    reference stable group ids).
-    """
-
-    def __init__(self, group_id, graph_node: GraphNarratorNode):
-        self.id = group_id
-        self.graph_node = graph_node
-        self.keys = []                 # hash keys this group is indexed under
-
-    @property
-    def canonical_name(self):
-        return self.graph_node.primary_name
-
-    def __repr__(self):
-        return f"Group(#{self.id} -> {self.graph_node!r})"
+                f"rank={self.rank} occ={self.occurrence_count} "
+                f"groups={len(self.groups)})")
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +296,9 @@ if __name__ == "__main__":
     print("   names seen :", person.names)
     print("   primary    :", person.primary_name)
 
-    group = GroupNode(100, person)
-    print("\ngroup:", group)
+    print("\ngroups inside this person (atomic, one per exact name form):")
+    for g in person.groups:
+        print("   ", g)
     print("\nJSON:")
     import json
     print(json.dumps(person.to_dict(), ensure_ascii=False, indent=2))
