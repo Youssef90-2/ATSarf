@@ -28,6 +28,12 @@ coverage.xml
 # Embedding cache written by name_embeddings.py (EmbeddingCache, cache_dir=".emb_cache")
 .emb_cache/
 
+# Engine cache written by engine.py (cache_dir=".engine_cache")
+.engine_cache/
+
+# Scratch re-run output directory
+_fresh/
+
 # Model weights / checkpoints (wojood.py, name_model.py)
 *.pt
 *.pth
