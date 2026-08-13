@@ -321,6 +321,111 @@ def import_qt_equality(path, source="", annotator="ATSarf-original"):
 
 
 # ===========================================================================
+# 3c. Merge-decision labels (Table 1)
+# ===========================================================================
+
+@dataclass
+class MergeGold:
+    """
+    Table 1 gold: WHICH NARRATOR OCCURRENCES ARE THE SAME PERSON.
+
+    This is a different kind of annotation from everything above, and the
+    difference is the whole reason this class exists. `GoldSet` stores SPANS —
+    where a name starts and ends. Table 1 does not score spans at all; it
+    scores the graph's MERGE DECISIONS, so what it needs is a cluster label
+    per occurrence:
+
+        {"h12#0": "kulayni", "h40#1": "kulayni", "h5#3": "ibn_abi_umayr"}
+
+    The key is "chain#position" — "the 1st narrator of hadith 12" — which is
+    what `graph_agreement.labels_from_graph` produces for the prediction side,
+    and which a human can address without knowing any internal id.
+
+    The label VALUES are opaque. Only the partition they induce is compared,
+    so "kulayni" and "p1" score identically; pick whatever is readable.
+
+    Annotating is cheap relative to spans: no character offsets, and a
+    bootstrap seeds the labels from the system's own clustering so the
+    annotator CORRECTS a partition instead of building one.
+    """
+    source: str = ""
+    annotator: str = ""
+    reviewed: bool = False                       # the same safeguard
+    labels: dict = field(default_factory=dict)   # {"chain#position": label}
+    note: str = ""
+    format_version: int = FORMAT_VERSION
+
+    def clusters(self):
+        """label -> [occurrence keys], for review and for stats."""
+        out = {}
+        for key, label in self.labels.items():
+            out.setdefault(label, []).append(key)
+        return out
+
+    def to_dict(self):
+        return {"format_version": self.format_version, "kind": "merge",
+                "source": self.source, "annotator": self.annotator,
+                "reviewed": self.reviewed, "note": self.note,
+                "labels": dict(self.labels)}
+
+    def save(self, path):
+        Path(path).write_text(
+            json.dumps(self.to_dict(), ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        return path
+
+    @staticmethod
+    def load(path):
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        return MergeGold(source=d.get("source", ""),
+                         annotator=d.get("annotator", ""),
+                         reviewed=bool(d.get("reviewed")),
+                         labels=dict(d.get("labels", {})),
+                         note=d.get("note", ""),
+                         format_version=d.get("format_version", 0))
+
+    def stats(self):
+        clusters = self.clusters()
+        sizes = [len(v) for v in clusters.values()]
+        return {"source": self.source, "reviewed": self.reviewed,
+                "annotator": self.annotator,
+                "occurrences": len(self.labels),
+                "clusters": len(clusters),
+                "singletons": sum(1 for s in sizes if s == 1),
+                "largest_cluster": max(sizes) if sizes else 0}
+
+
+def load_merge_for_scoring(path):
+    """
+    Same refusal as span gold: a bootstrapped partition is the SYSTEM's own
+    clustering. Scoring against it compares the graph to itself and returns a
+    perfect 1.0 that means nothing.
+    """
+    gold = MergeGold.load(path)
+    if not gold.reviewed:
+        raise GoldError(
+            f"{Path(path).name} is still a BOOTSTRAP seed (reviewed=false). "
+            "Its labels are the system's own merge decisions — scoring "
+            "against them compares the graph to itself and always returns "
+            '1.0. Correct the clusters, then set "reviewed": true.')
+    if not gold.labels:
+        raise GoldError(f"{Path(path).name} has no labels.")
+    return gold
+
+
+def bootstrap_merge_labels(pred_labels, source="", annotator="", note=""):
+    """
+    Seed a MergeGold from `graph_agreement.labels_from_graph` output, written
+    reviewed=false. The annotator then splits/joins clusters by editing label
+    values — no offsets involved.
+    """
+    return MergeGold(source=source, annotator=annotator, reviewed=False,
+                     labels={k: str(v) for k, v in pred_labels.items()},
+                     note=note or ("bootstrap from system output — correct the "
+                                   "clusters, then set reviewed: true"))
+
+
+# ===========================================================================
 # 4. Validation — catch a broken annotation before it silently skews a table
 # ===========================================================================
 
