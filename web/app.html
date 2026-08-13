@@ -103,7 +103,7 @@
     <div class="navitem" onclick="nav('graph',this)"><span class="n">٢</span> شبكة الرواة</div>
     <div class="navitem" onclick="nav('merge',this)"><span class="n">٣</span> دمج الشبكات</div>
     <div class="navitem" onclick="nav('bio',this)"><span class="n">٤</span> كتاب الرجال</div>
-    <div class="navitem" onclick="nav('link',this)"><span class="n">٥</span> الربط + Table 2</div>
+    <div class="navitem" onclick="nav('link',this)"><span class="n">٥</span> التجربة عبر الوثائق</div>
   </div>
   <div id="conn" class="conn off">غير متصل</div>
 </div>
@@ -174,7 +174,7 @@
     <div class="toolbar">
       <label class="opt">النبذات <select id="linkBio"></select></label>
       <label class="opt">الشبكة <select id="linkGraph"></select></label>
-      <label class="opt">k <input type="number" id="linkK" value="2" min="1" max="3" style="width:55px"></label>
+      <label class="opt" title="نصف قطر k-reachable — النظام القديم يثبّته على 1">k <input type="number" id="linkK" value="1" min="1" max="3" style="width:55px"></label>
       <button class="btn" onclick="doLink()">اربط وقِس</button>
     </div>
     <div id="linkResult"></div>
@@ -189,8 +189,8 @@ const PER=20;
 const TITLES={seg:['تقطيع الحديث','ارفع كتاباً، قطّعه، وراجع السند والمتن لكل حديث'],
   graph:['شبكة الرواة','شجرة الأساتذة والتلاميذ لكل راوٍ'],
   merge:['دمج الشبكات','ادمج عدة كتب في شبكة موحّدة'],
-  bio:['كتاب الرجال','قطّع النبذات واستخرج الأساتذة والتلاميذ'],
-  link:['الربط + Table 2','اربط النبذات بالشبكة وقِس تحسّن كشف الحدود']};
+  bio:['كتاب الرجال','استخرج قائمة الرواة (lb) بترتيب النص — بدون الشبكة'],
+  link:['التجربة عبر الوثائق','نفس الآلة مرتين: بدون شبكة / مع شبكة (الورقة §4)']};
 
 function ping(){ fetch(BASE+"/health").then(r=>r.json()).then(()=>{
   const c=document.getElementById('conn'); c.textContent="● متصل"; c.className="conn ok"; refreshSession();
@@ -399,12 +399,14 @@ async function doBio(){
   try{
     const j=await (await fetch(BASE+"/segment-biography",{method:"POST",body:fd})).json();
     document.getElementById('bioStats').innerHTML=`<div class="stats">
-      <div class="stat"><div class="num">${j.stats.entries}</div><div class="lbl">نبذات</div></div>
-      <div class="stat good"><div class="num">${j.stats.with_relations}</div><div class="lbl">بأساتذة/تلاميذ</div></div></div>`;
-    document.getElementById('bioResult').innerHTML=j.entries.filter(e=>e.teachers.length||e.students.length).slice(0,30).map(e=>
-      `<div class="box"><b>#${e.number} ${e.subject}</b>
-        <div class="sec">الأساتذة (روى عن):</div><div>${e.teachers.join('، ')||'—'}</div>
-        <div class="sec">التلاميذ (روى عنه):</div><div>${e.students.join('، ')||'—'}</div></div>`).join('');
+      <div class="stat"><div class="num">${j.stats.tokens}</div><div class="lbl">كلمات</div></div>
+      <div class="stat good"><div class="num">${j.stats.mentions}</div><div class="lbl">ذكر راوٍ (lb)</div></div>
+      <div class="stat"><div class="num">${j.stats.narrator_runs}</div><div class="lbl">مقاطع رواة</div></div>
+      <div class="stat warn"><div class="num">${j.stats.runs_ended_by_budget}</div><div class="lbl">انتهت بالميزانية</div></div></div>
+      <div class="box" style="border-right:4px solid var(--amber)">${j.note}</div>`;
+    document.getElementById('bioResult').innerHTML=j.mentions.map(m=>
+      `<div class="box"><b>${esc(m.name)}</b> <span class="badge">${m.start}–${m.end}</span>
+        <div class="orig" style="margin-top:8px">${esc(m.context)}</div></div>`).join('');
     refreshSession();
   }catch(e){ document.getElementById('bioResult').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
   finally{ b.disabled=false; b.textContent="قطّع النبذات"; }
@@ -418,14 +420,32 @@ async function doLink(){
   try{
     const j=await (await fetch(BASE+"/link-biography",{method:"POST",headers:{'Content-Type':'application/json'},
       body:JSON.stringify({bio_name:bio,graph_name:graph,k:parseInt(document.getElementById('linkK').value)})})).json();
-    document.getElementById('linkResult').innerHTML=`<div class="stats">
-        <div class="stat"><div class="num">${j.gold_entries}</div><div class="lbl">نبذات بالـ graph</div></div>
-        <div class="stat"><div class="num">${j.neighbours_in_graph}</div><div class="lbl">جيران بالـ graph</div></div>
-        <div class="stat"><div class="num">k=${j.k}</div><div class="lbl">عمق</div></div></div>
-      <div class="t2">
-        <div class="cell ng"><div class="lbl">بدون graph — boundary recall</div><div class="v">${(j.no_graph_recall*100).toFixed(0)}%</div></div>
-        <div class="cell wg"><div class="lbl">مع graph — boundary recall</div><div class="v">${(j.with_graph_recall*100).toFixed(0)}%</div></div></div>
-      <p class="sec" style="margin-top:16px">القفزة: ${(j.no_graph_recall*100).toFixed(0)}% ← ${(j.with_graph_recall*100).toFixed(0)}% (الورقة: 41% ← 93%). النتيجة تعتمد على k.</p>`;
+    const ROWS=[["mentions","ذكر راوٍ"],["confirmed_mentions","أكّدته الشبكة"],
+                ["narrator_runs","مقاطع رواة"],["runs_ended_by_budget","ماتت بالميزانية"],
+                ["entries_detected","نبذات مكتشفة"],["avg_entry_chars","متوسط طول النبذة"]];
+    document.getElementById('linkResult').innerHTML=
+      `<div class="box" style="border-right:4px solid var(--amber)">
+         <b>أرقام سلوك — ليست Table 2</b>
+         <div class="sec" style="margin-top:6px">${esc(j.note)}</div></div>
+       <div class="box">نفس الآلة مرتين، الفرق الوحيد: <code>confirm=None</code> مقابل
+         <code>confirm=GraphIndex.confirm</code> · k=${j.params.k} ·
+         عتبة المطابقة ${j.params.match_threshold} ·
+         مطابقة دقيقة ${j.graph_stats.persons_exact_canonical}/${j.graph_stats.persons}</div>
+       <table style="width:100%;border-collapse:collapse;margin-top:12px">
+         <tr><th style="text-align:right;padding:8px"></th>
+             <th style="padding:8px;color:var(--red)">بدون شبكة</th>
+             <th style="padding:8px;color:var(--accent2)">مع الشبكة</th></tr>
+         ${ROWS.map(([k,lbl])=>`<tr style="border-top:1px solid var(--line)">
+            <td style="padding:8px">${lbl}</td>
+            <td style="padding:8px;text-align:center">${j.no_graph[k]}</td>
+            <td style="padding:8px;text-align:center"><b>${j.with_graph[k]}</b></td></tr>`).join('')}
+       </table>
+       <p class="sec" style="margin-top:14px">الشبكة لا تجد رواة أكثر — بل تمنع المقاطع من الموت. هذه آلية الورقة.</p>
+       ${j.entries.map(e=>`<div class="box"><b>${esc(e.subject)}</b>
+          <span class="badge num">score ${e.score}</span>
+          <span class="badge">${e.start}–${e.end}</span>
+          <div class="sec">جيران أكّدتهم الشبكة:</div><div>${esc((e.confirmed_neighbours||[]).join('، '))||'—'}</div>
+          <div class="orig" style="margin-top:8px">${esc(e.text||'')}</div></div>`).join('')}`;
   }catch(e){ document.getElementById('linkResult').innerHTML='<p class="msg" style="color:#a5432f">خطأ: '+e.message+'</p>'; }
 }
 </script>

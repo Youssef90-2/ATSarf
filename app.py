@@ -35,6 +35,17 @@ from fsm import FsmParams
 from models import Chain, Narrator, NameConnector, NamePrim
 from graph_build import GraphParams
 from narrator_graph import NarratorGraph
+from normalization import normalize
+
+# --- the biography stage: the SAME modules run_biography.py drives ----------
+# There is exactly one biography method in this project, and it is the
+# paper's: BiographyFSM (§4 automaton) -> GraphIndex (§4 isRealNarrator) ->
+# BiographyDetector (§4 findChosenBiography / k-reachable boundaries).
+# The web UI must not have a second, simpler one — a result you can only get
+# from the UI is not a result you can put in the report.
+from bio_fsm import BiographyFSM, BioParams
+from biography_detector import BiographyDetector, BiographyParams
+from narrator_matcher import GraphIndex
 
 app = FastAPI(title="Hadith System API", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -156,7 +167,14 @@ def build_graph(payload: dict = Body(...)):
     graph.build(chains)
 
     persons = [p.to_dict() for p in graph.persons.values()]
-    SESSION["graphs"][name] = {"persons": persons}
+    # Store `params` too: GraphIndex reads equality_threshold from here so the
+    # biography stage matches at the threshold the graph was BUILT at (D7).
+    # Without it every lookup silently falls back to a hardcoded default.
+    SESSION["graphs"][name] = {
+        "persons": persons,
+        "params": {"equality_threshold": threshold, "equality_radius": 3,
+                   "qualifiers_mode": "off"},
+    }
 
     edges = sum(len(p["children"]) for p in persons)
     top = sorted(persons, key=lambda p: p["occurrences"], reverse=True)[:10]
@@ -200,7 +218,11 @@ def merge_graphs_ep(payload: dict = Body(...)):
 
     # book provenance per person could be added here later
     persons = [p.to_dict() for p in graph.persons.values()]
-    SESSION["graphs"][out_name] = {"persons": persons}
+    SESSION["graphs"][out_name] = {
+        "persons": persons,
+        "params": {"equality_threshold": threshold, "equality_radius": 3,
+                   "qualifiers_mode": "off"},
+    }
 
     edges = sum(len(p["children"]) for p in persons)
     return {
@@ -220,8 +242,8 @@ async def segment_biography(
     file: Optional[UploadFile] = File(None),
     text: Optional[str] = Form(None),
     name: str = Form("khoei"),
+    use_wojood: bool = Form(True),
 ):
-    from biography_segmenter import BiographySegmenter
     if file is not None:
         raw = await file.read(); book_text = raw.decode("utf-8", errors="replace")
     elif text:
@@ -229,16 +251,47 @@ async def segment_biography(
     else:
         raise HTTPException(400, "provide a file or text")
 
-    entries, clean_text, stats = BiographySegmenter().segment(book_text)
-    ed = [e.to_dict() for e in entries]
-    SESSION["biographies"][name] = ed
+    # Paper §4: "ANGE computes lb, the list of detected narrators in the
+    # biography books using similar techniques used in the hadith books, and
+    # orders lb by the order of appearance."
+    #
+    # This step is the NO-GRAPH baseline — BiographyFSM with confirm=None,
+    # exactly the paper's control condition. Entry BOUNDARIES are not decided
+    # here; they come from the graph in step 5. That separation is the whole
+    # experiment, so it must not be short-circuited by guessing entries from
+    # a "N - name:" regex.
+    clean_text, _index_map = normalize(book_text)
+    engine = get_engine(use_wojood)
+    tokens = engine.analyze_cached(clean_text)
 
-    rich = [e for e in ed if e["teachers"] or e["students"]]
+    fsm = BiographyFSM(BioParams(), confirm=None)
+    mentions = fsm.run(tokens)
+
+    # Keep the tokens: step 5 re-runs the automaton WITH the graph, and
+    # re-analysing a whole rijal book through CAMeL+Wojood would cost minutes.
+    SESSION["biographies"][name] = {
+        "clean_text": clean_text,
+        "tokens": tokens,
+        "mentions": [m.to_dict() for m in mentions],
+        "fsm_stats": dict(fsm.stats),
+    }
+
     return {
         "name": name,
-        "stats": {"entries": len(ed), "with_relations": len(rich),
-                  "cross_refs": sum(1 for e in ed if e.get("is_reference"))},
-        "entries": ed,
+        "stats": {
+            "chars": len(clean_text),
+            "tokens": len(tokens),
+            "mentions": len(mentions),
+            "narrator_runs": len(getattr(fsm, "candidates", [])),
+            "runs_ended_by_budget": fsm.stats.get("runs_ended_by_budget", 0),
+            "wojood": getattr(engine, "wojood", None) and engine.wojood.available,
+        },
+        "note": "قائمة الرواة (lb) بدون الشبكة — الحدود تُحدَّد في الخطوة ٥",
+        "mentions": [
+            {"name": m.name, "start": m.start, "end": m.end,
+             "context": clean_text[max(0, m.start - 40):m.end + 40]}
+            for m in mentions[:60]
+        ],
     }
 
 
@@ -247,52 +300,82 @@ async def segment_biography(
 # ===========================================================================
 @app.post("/link-biography")
 def link_biography(payload: dict = Body(...)):
-    from biography_linker import Graph
-    from kreachable import ReachabilityIndex
-    from biography_linker import canonize_string
-    from equality import narrator_distance
+    """
+    The paper's cross-document experiment (§4, Table 2), run exactly as
+    run_biography.py runs it: the SAME automaton twice, differing in ONE
+    argument.
 
+        NO-GRAPH    BiographyFSM(confirm=None)
+        WITH-GRAPH  BiographyFSM(confirm=GraphIndex.confirm)
+
+    That single switch is the independent variable. The FSM, its parameters,
+    the detector and the k-reachable radius are identical across the two, which
+    is what makes the columns comparable.
+
+    NOTE ON WHAT THIS DOES *NOT* RETURN: recall/precision against gold. Those
+    are Table 2 proper and need a reviewed gold file — run_biography.py --gold.
+    What comes back here is the pipeline's own behaviour, which is observable
+    without gold and is where the mechanism is visible: the graph does not find
+    MORE narrators, it stops the runs from dying.
+    """
     bio_name = payload.get("bio_name", "khoei")
     graph_name = payload.get("graph_name")
-    k = int(payload.get("k", 2))
-    threshold = float(payload.get("threshold", 0.1))
+    k = int(payload.get("k", 1))                      # old code hardcodes 1
+    near = int(payload.get("near", 100))              # old bio_nrc_max
+    bio_threshold = float(payload.get("bio_threshold", 2.0))
+    sequential = bool(payload.get("sequential", False))
 
     if bio_name not in SESSION["biographies"]:
         raise HTTPException(404, f"no biography '{bio_name}'")
     if graph_name not in SESSION["graphs"]:
         raise HTTPException(404, f"no graph '{graph_name}'")
 
-    entries = SESSION["biographies"][bio_name]
-    graph = Graph(SESSION["graphs"][graph_name]["persons"])
-    reach = ReachabilityIndex(graph.persons, undirected=True)
+    stored = SESSION["biographies"][bio_name]
+    tokens = stored["tokens"]
+    clean_text = stored["clean_text"]
 
-    def match_ids(nm):
-        return [pid for pid, _ in graph.match(nm, threshold)]
+    index = GraphIndex(SESSION["graphs"][graph_name])
+    det_params = BiographyParams(near_max_chars=near, threshold=bio_threshold,
+                                 k=k, sequential_disambiguation=sequential)
 
-    gold = [e for e in entries if not e.get("is_reference") and match_ids(e["subject"])]
-    denom = ng = wg = 0
-    for e in gold:
-        subj_ids = match_ids(e["subject"])
-        # OLD-STYLE: use the full bag of co-mentioned narrators; fall back to
-        # the labelled teachers/students if all_narrators is absent.
-        neighbours = e.get("all_narrators") or (e["teachers"] + e["students"])
-        for nb in neighbours:
-            nb_ids = match_ids(nb)
-            if not nb_ids:
-                continue
-            denom += 1
-            if len(nb_ids) == 1:
-                ng += 1
-            if reach.any_reachable(subj_ids, nb_ids, k=k):
-                wg += 1
+    def condition(confirm):
+        fsm = BiographyFSM(BioParams(), confirm=confirm)
+        mentions = fsm.run(tokens)
+        detector = (BiographyDetector(mentions, index, det_params)
+                    if confirm is not None else None)
+        detected = detector.detect() if detector else []
+        return {
+            "mentions": len(mentions),
+            "confirmed_mentions": sum(1 for m in mentions if m.confirmed),
+            "narrator_runs": len(getattr(fsm, "candidates", [])),
+            "runs_ended_by_budget": fsm.stats.get("runs_ended_by_budget", 0),
+            "entries_detected": len(detected),
+            "avg_entry_chars": (round(sum(b.end - b.start for b in detected)
+                                      / len(detected)) if detected else 0),
+        }, detected, detector
 
-    def ratio(a, b): return round(a / b, 3) if b else 0.0
+    no_graph, _, _ = condition(None)
+    with_graph, detected, detector = condition(index.confirm)
+
     return {
-        "bio": bio_name, "graph": graph_name, "k": k,
-        "gold_entries": len(gold), "neighbours_in_graph": denom,
-        "no_graph_recall": ratio(ng, denom),
-        "with_graph_recall": ratio(wg, denom),
-        "no_graph_correct": ng, "with_graph_correct": wg,
+        "bio": bio_name,
+        "graph": graph_name,
+        "params": {"k": k, "near_max_chars": near,
+                   "bio_threshold": bio_threshold,
+                   "sequential_disambiguation": sequential,
+                   "match_threshold": index.threshold},
+        "graph_stats": index.stats(),
+        "no_graph": no_graph,
+        "with_graph": with_graph,
+        "disambiguation": detector.disambiguation_stats if detector else {},
+        "entries": [
+            dict(b.to_dict(),
+                 text=clean_text[b.start:min(b.end, b.start + 300)])
+            for b in detected[:40]
+        ],
+        "reportable": False,
+        "note": ("أرقام السلوك فقط. Table 2 (recall/precision) تحتاج ملف gold "
+                 "مُراجَع عبر run_biography.py --gold"),
     }
 
 
@@ -304,7 +387,8 @@ def session():
     return {
         "books": {k: len(v) for k, v in SESSION["books"].items()},
         "graphs": {k: len(v["persons"]) for k, v in SESSION["graphs"].items()},
-        "biographies": {k: len(v) for k, v in SESSION["biographies"].items()},
+        "biographies": {k: len(v["mentions"])
+                        for k, v in SESSION["biographies"].items()},
     }
 
 @app.get("/health")

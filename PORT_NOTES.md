@@ -731,6 +731,69 @@ here means *of the gold words we claimed, how many were right*.
 |---|---|
 | `boundary_gold.py` | built "gold" by calling the same segmenter under test — gold == prediction, so every number derived from it was meaningless |
 | `boundary_eval.py` | strawman no-graph baseline (`len(candidates) == 1`) plus the wrong metric shape; superseded by `run_biography.py` + `agreement.py` |
+| `biography_segmenter.py` | a SECOND biography method — see §6.1 |
+| `biography_linker.py` | ditto |
+
+### 6.1 One biography method, not two
+
+The web app used to run its own biography pipeline: `biography_segmenter.py`
+cut the rijal book on an `N - name :` regex, and `biography_linker.py` scored
+entries against the graph. Both are gone.
+
+**Why.** They were not the paper's method, and said so
+(`biography_segmenter.py:28-37`: *"WHY WE DON'T JUST RUN THE HADITH FSM
+HERE… the segmenter stays deliberately simple"*). A regex over entry headers
+works on al-Khoei because that book is typeset with numbered headers; it is
+not §4, it does not produce `lb`, and its boundaries come from typography
+rather than from the graph. A number obtainable only from the UI is not a
+number that can go in the report.
+
+Three defects that fell out with them, each a symptom of the split:
+
+1. `_clean_name` stripped the `عن` prefix **before** the `و` prefix, so
+   `وعن علي بن محمد القمي` kept its `عن` — the regexes ran in the wrong order
+   and nothing re-checked.
+2. `/link-biography` tested reachability from **every** subject candidate
+   rather than the disambiguated one, so a single hub node among the
+   candidates (one had 28 parents + 22 children) made almost any name look
+   reachable. Ambiguity inflated the score instead of being resolved by it.
+   `biography_linker.link_entry` did disambiguate correctly — the endpoint
+   simply never called it.
+3. Prose leaked in as narrator names (`من اهل بلخ`,
+   `قيل انه كان يقول بالتفويض`), because a header regex has no morphology
+   behind it.
+
+**Now.** `app.py` drives the same modules `run_biography.py` drives:
+
+| step | module | paper |
+|---|---|---|
+| `/segment-biography` | `bio_fsm.BiographyFSM(confirm=None)` | §4 — builds `lb`, the no-graph baseline |
+| `/link-biography` | `narrator_matcher.GraphIndex` + `biography_detector.BiographyDetector` | §4 — isRealNarrator, k-reachable boundaries |
+
+The endpoint runs **both conditions**, differing in one argument
+(`confirm=None` vs `confirm=GraphIndex.confirm`), as the runner does.
+
+Two fixes came with it. `SESSION["graphs"]` now stores `params`, so
+`GraphIndex` matches at the threshold the graph was **built** at rather than a
+hardcoded `0.1` (D7). And because the session graph carries serialized
+`groups`, matching runs on exact canonical forms —
+`persons_reparsed_from_string: 0`, measured.
+
+Measured on a 60k-char kafi slice (288 persons) × a 40k-char khoei slice:
+
+| | no-graph | with-graph |
+|---|---|---|
+| mentions | 88 | 90 |
+| confirmed by graph | 0 | 20 |
+| **runs killed by budget** | **302** | **213** |
+| entries detected | 0 | 1 |
+
+The graph does not find more narrators — it stops the runs from dying. Same
+mechanism as §6, visible on a slice.
+
+**Still not Table 2.** The endpoint reports pipeline behaviour, not
+recall/precision, and returns `"reportable": false`. Table 2 needs a reviewed
+gold file via `run_biography.py --gold`.
 
 ### Substantially rewritten
 
@@ -789,9 +852,10 @@ intrinsic correctness criterion. Conditions 1 and 2 pass; condition 3
 - **A9** iterative threshold lowering · **A11** narrator gazetteer + nisba
   lexicon (which would subsume C2, and would let C1's gating rely on a real
   gazetteer rather than CAMeL's `noun_prop` alone)
-- **E1–E5** — web app: wrong connector class, hardcoded params, a web/CLI
-  filter mismatch, in-memory session state, and `/link-biography` still
-  reporting the deleted strawman numbers
+- **E1–E4** — web app: wrong connector class, hardcoded params, a web/CLI
+  filter mismatch, in-memory session state.
+  **E5 is closed** — `/link-biography` no longer reports strawman numbers; it
+  drives the paper's modules and declares `reportable: false`. See §6.1.
 
 ### Data
 
