@@ -1,0 +1,1836 @@
+re<meta charset="utf-8">
+<title>Cross-Document Extraction of Hadith Narrator Graphs — Final Year Project Report</title>
+<style>
+@page { size: A4; margin: 2.5cm 2.2cm 2.5cm 2.8cm; }
+body  { font-family: "Cambria","Times New Roman",serif; font-size: 11.5pt;
+        line-height: 1.55; color: #111; text-align: justify; }
+h1    { font-size: 20pt; margin: 26pt 0 12pt; page-break-before: always;
+        border-bottom: 1.5pt solid #333; padding-bottom: 5pt; }
+h1.nobreak { page-break-before: avoid; }
+h2    { font-size: 14.5pt; margin: 20pt 0 8pt; color: #1a1a1a; }
+h3    { font-size: 12.5pt; margin: 14pt 0 6pt; color: #222; font-style: normal; }
+h4    { font-size: 11.5pt; margin: 12pt 0 4pt; font-variant: small-caps; }
+p     { margin: 0 0 9pt; }
+table { border-collapse: collapse; width: 100%; margin: 10pt 0 6pt;
+        font-size: 10pt; }
+th    { background: #ececec; border: 0.75pt solid #999; padding: 4pt 6pt;
+        text-align: left; font-weight: bold; }
+td    { border: 0.75pt solid #999; padding: 4pt 6pt; vertical-align: top; }
+caption { caption-side: bottom; font-size: 9.5pt; color: #444; padding-top: 4pt;
+        text-align: left; font-style: italic; }
+code  { font-family: Consolas,"Courier New",monospace; font-size: 9.5pt;
+        background: #f4f4f4; }
+pre   { font-family: Consolas,"Courier New",monospace; font-size: 9pt;
+        background: #f6f6f6; border: 0.75pt solid #bbb; border-left: 3pt solid #666;
+        padding: 7pt 9pt; white-space: pre-wrap; line-height: 1.35; margin: 8pt 0; }
+.ar   { direction: rtl; unicode-bidi: embed;
+        font-family: "Traditional Arabic","Simplified Arabic","Amiri",serif;
+        font-size: 13pt; }
+.arline { direction: rtl; unicode-bidi: embed; text-align: right;
+        font-family: "Traditional Arabic","Simplified Arabic","Amiri",serif;
+        font-size: 13.5pt; line-height: 1.9; background: #fafafa;
+        border: 0.75pt solid #ccc; padding: 8pt 10pt; margin: 8pt 0; }
+.fig  { border: 0.75pt solid #999; padding: 10pt; margin: 10pt 0 4pt;
+        background: #fbfbfb; }
+.figcap { font-size: 9.5pt; color: #444; font-style: italic; margin: 0 0 12pt; }
+.box  { border: 1pt solid #555; padding: 5pt 7pt; text-align: center;
+        background: #fff; font-size: 9.5pt; }
+.boxk { border: 1pt solid #333; padding: 5pt 7pt; text-align: center;
+        background: #eaeaea; font-size: 9.5pt; font-weight: bold; }
+.arrow{ text-align: center; font-size: 13pt; color: #444; border: none; }
+.note { border-left: 3pt solid #777; background: #f7f7f7; padding: 7pt 10pt;
+        margin: 10pt 0; font-size: 10.5pt; }
+.tp   { text-align: center; margin-top: 3.2cm; }
+.tp h1{ border: none; page-break-before: avoid; font-size: 23pt; margin-bottom: 4pt; }
+.small{ font-size: 9.5pt; color: #555; }
+ul,ol { margin: 0 0 9pt 18pt; padding: 0; }
+li    { margin-bottom: 3pt; }
+.toc td { border: none; padding: 2.5pt 0; font-size: 10.5pt; }
+.toc td.n { width: 2.6cm; }
+</style>
+
+<div class="tp">
+<p class="small">American University of Beirut — Faculty of Engineering and Architecture<br>
+Department of Electrical and Computer Engineering</p>
+<h1>Cross-Document Extraction of<br>Hadith Narrator Graphs</h1>
+<p style="font-size:13pt; margin-top:10pt;">A Modern Arabic NLP Reimplementation of ANGE<br>
+<span class="small">using CAMeL Tools and Wojood in place of Sarf</span></p>
+<p style="margin-top:2.4cm; font-size:12pt;">Final Year Project Report</p>
+<p style="margin-top:1.6cm;">Youssef Ibrahim</p>
+<p class="small">Supervisor: Prof. Fadi Zaraket</p>
+<p style="margin-top:2.4cm;" class="small">Academic Year 2025–2026</p>
+</div>
+
+<h1 class="nobreak" style="page-break-before:always;">Abstract</h1>
+
+<p>The authentication of a <em>hadith</em> — a reported saying of the Prophet or an
+Imam — rests on the credibility of the chain of people who transmitted it. That
+chain, the <span class="ar">سند</span> (<em>sanad</em>), is recorded in the hadith
+books; the credibility of each transmitter is recorded separately, in biographical
+dictionaries known as <span class="ar">رجال</span> (<em>rijal</em>) literature.
+Linking the two is manual work, and the volume makes it error-prone: a single
+collection runs to thousands of narrations naming tens of thousands of narrator
+mentions.</p>
+
+<p>Zaraket and Makhlouta (2012) proposed ANGE, a system that extracts a narrator
+graph from hadith books using morphological analysis, finite state machines and
+graph transformations, then uses that graph to disambiguate and segment the
+biography books — a cross-document technique that raised narrator-boundary recall
+from 41% to 93%. Their implementation was written in C++/Qt against Sarf, an
+in-house morphological analyser backed by a MySQL lexicon.</p>
+
+<p>This project reimplements ANGE in Python, replacing the Sarf and MySQL stack with
+CAMeL Tools for morphological disambiguation and Wojood for named-entity
+recognition. The work is not a translation. Reading the original implementation
+alongside the paper revealed that three mechanisms the paper describes were never
+implemented in the released code, and that two further routines contain defects
+that silently discard results. This report documents the reimplemented system in
+full — every stage from raw hadith text to an annotated biography — states each
+divergence from the original and its justification, and specifies the evaluation
+framework through which results will be reported once gold annotations are
+available.</p>
+
+<p>The delivered system comprises 24 modules and a regression suite of 165 tests,
+none of which require the morphological models to be installed, so that the
+automaton and graph logic remain verifiable independently of the NLP layer.</p>
+
+<h1>Table of Contents</h1>
+
+<table class="toc">
+<tr><td class="n">1</td><td>Introduction</td></tr>
+<tr><td class="n">2</td><td>Background</td></tr>
+<tr><td class="n">3</td><td>The Original System and What Reading It Revealed</td></tr>
+<tr><td class="n">4</td><td>System Architecture</td></tr>
+<tr><td class="n">5</td><td>Stage&nbsp;1 — From Book to Chains</td></tr>
+<tr><td class="n">6</td><td>Stage&nbsp;2 — The Narrator Graph</td></tr>
+<tr><td class="n">7</td><td>Stage&nbsp;3 — The Biography Stage</td></tr>
+<tr><td class="n">8</td><td>Stage&nbsp;4 — The Evaluation Framework</td></tr>
+<tr><td class="n">9</td><td>Implementation and Testing</td></tr>
+<tr><td class="n">10</td><td>Results</td></tr>
+<tr><td class="n">11</td><td>Discussion and Limitations</td></tr>
+<tr><td class="n">12</td><td>Conclusion and Future Work</td></tr>
+<tr><td class="n">&nbsp;</td><td>References</td></tr>
+<tr><td class="n">A</td><td>Appendix — Module Inventory</td></tr>
+<tr><td class="n">B</td><td>Appendix — Parameters</td></tr>
+<tr><td class="n">C</td><td>Appendix — Test Inventory</td></tr>
+</table>
+
+<h1>1. Introduction</h1>
+
+<h2>1.1 The problem</h2>
+
+<p>A hadith has two parts. The <em>matn</em> (<span class="ar">متن</span>) is the
+content — what was said. The <em>sanad</em> (<span class="ar">سند</span>) is the
+chain of transmission that precedes it: a list of people, each naming the person
+they heard it from, running back from the compiler of the book to the original
+speaker. Jurisprudence in every Islamic school of thought turns on whether that
+chain is sound, and a chain is sound only if each person in it is known and
+considered reliable.</p>
+
+<p>Judging reliability requires a second body of literature. The <em>rijal</em>
+dictionaries devote an entry to each known narrator: who they studied under, who
+transmitted from them, where they lived, and what earlier scholars said about
+their trustworthiness. A scholar authenticating a chain must therefore, for every
+name in it, locate the corresponding entry in a rijal book — across works that run
+to several volumes each.</p>
+
+<p>Two things make this hard to automate. First, neither corpus is segmented: a
+hadith book is a continuous stream of text in which the boundary between one
+narration and the next, and between sanad and matn, is not marked. Second, Arabic
+names are not identifiers. The same person appears as
+<span class="ar">عبد الله بن عمر</span>, as <span class="ar">ابن عمر</span>, and as
+<span class="ar">عبد الله بن عمر رضي الله عنه</span>; two different people may share
+every written component of their name and be distinguishable only by who they
+narrated from.</p>
+
+<h2>1.2 The approach</h2>
+
+<p>ANGE's insight is that the two corpora help each other. The hadith books, though
+harder to read individually, are highly repetitive: the same narrator appears in
+hundreds of chains alongside the same neighbours. Aggregating those chains produces
+a graph in which each person is a node and each transmission an edge. That graph
+then acts as external knowledge when reading the biography books: a name in a rijal
+entry can be checked against the graph, and — more importantly — the narrators
+named around it can be checked for whether the graph says they belong together.</p>
+
+<p>The consequence, which the original paper reports and which this project
+reproduces structurally, is counter-intuitive. Using the graph makes the system
+detect <em>fewer</em> narrators in the biography books, because it keeps only those
+it can confirm. But the ones it keeps have correct boundaries, and boundary recall
+more than doubles.</p>
+
+<h2>1.3 Objectives</h2>
+
+<ol>
+<li>Reimplement ANGE end to end in Python, replacing Sarf and MySQL with CAMeL
+Tools and Wojood, and verify the reimplementation against the original source
+rather than against the paper's prose alone.</li>
+<li>Implement the evaluation framework the original used, so that results are
+comparable in kind to the published ones.</li>
+<li>Identify and document every point at which the released implementation
+diverges from the published description, and justify each choice made in
+response.</li>
+<li>Produce a system whose logic is testable without the heavyweight NLP models,
+so that regressions surface immediately rather than after a multi-hour run.</li>
+</ol>
+
+<h2>1.4 Contributions</h2>
+
+<p>Beyond the reimplementation itself, this project makes four contributions that
+were not available before it.</p>
+
+<p><strong>Three unimplemented claims implemented.</strong> Reading the C++ source
+line by line established that three mechanisms described in the paper are absent
+from the released system: the conflicting/reinforcing <em>nisba</em> logic in the
+name-distance metric, a tunable <em>k</em> in the k-reachable neighbourhood search,
+and the sequential ambiguity constraint in biography linking. Section 3.3 gives the
+evidence. All three are implemented here, kept switchable, and reported separately
+from the faithful baseline.</p>
+
+<p><strong>Two defects corrected.</strong> The candidate-ranking routine
+<code>updateGroups</code> discards the better of two competing results rather than
+the worse; the evaluation scorer omits unmatched gold items from its denominator,
+inflating recall. Both are analysed in Section 3.4.</p>
+
+<p><strong>A verifiable test suite.</strong> 165 regression tests, none of which
+require CAMeL Tools or Wojood, covering the automaton, the graph algorithms, the
+scorers and the file formats.</p>
+
+<p><strong>A gold-annotation layer that reads the original binaries.</strong> The
+original gold files were excluded from the published repository. A reader for the
+Qt <code>QDataStream</code> format used by those files is provided, so that if the
+originals are recovered they can be scored directly.</p>
+
+<h2>1.5 Structure of this report</h2>
+
+<p>Chapter 2 gives the background needed to read the rest: the structure of hadith
+and rijal texts, and the specific difficulties Arabic morphology presents. Chapter
+3 describes the original system and reports what reading its source revealed.
+Chapter 4 gives the architecture of the reimplementation. Chapters 5 to 8 follow
+the pipeline in order — hadith segmentation, graph construction, biography
+processing, evaluation — each with worked examples drawn from the corpora. Chapter
+9 covers implementation and testing. Chapter 10 is reserved for results and
+presents the experimental design that will populate it. Chapters 11 and 12 discuss
+limitations and future work.</p>
+
+<h1>2. Background</h1>
+
+<h2>2.1 The structure of a hadith</h2>
+
+<p>Figure 2.1 shows a hadith from the corpus, segmented by the system. The chain
+runs right to left in the original text; each narrator heard the report from the
+one named after them.</p>
+
+<div class="fig">
+<div class="arline">
+٣ - أحمد بن إدريس، عن محمد بن عبد الجبار، عن بعض أصحابنا، عن أبي عبد الله عليه
+السلام قال: قلت له: ما العقل؟ قال: ما عبد به الرحمن واكتسب به الجنان.
+</div>
+<table>
+<tr><th style="width:3.5cm">Component</th><th>Text</th><th style="width:3.2cm">Offsets</th></tr>
+<tr><td>narrator 1</td><td class="ar">أحمد بن إدريس</td><td>1022–1035</td></tr>
+<tr><td>narrator 2</td><td class="ar">محمد بن عبد الجبار</td><td>1040–1058</td></tr>
+<tr><td>narrator 3</td><td class="ar">بعض أصحابنا</td><td>1063–1074</td></tr>
+<tr><td>narrator 4</td><td class="ar">أبي عبد الله</td><td>1084–1096</td></tr>
+<tr><td>honorific</td><td class="ar">عليه السلام</td><td>1097–1108</td></tr>
+<tr><td><em>matn</em></td><td class="ar">قال: قلت له: ما العقل؟ …</td><td>1109–</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 2.1 — Hadith 3 of <em>al-Kafi</em> vol. 1 as segmented by the
+system. Character offsets are into the normalised text and are what every later
+stage operates on.</p>
+
+<p>Three features of this example recur throughout and shape the design.</p>
+
+<p>The chain is joined by <em>narration connectors</em> — here
+<span class="ar">عن</span> ("from"), elsewhere <span class="ar">حدثنا</span>
+("narrated to us") and its morphological variants. These are the strongest signal
+available that a narrator boundary has occurred, and the finite state machine of
+Chapter 5 is built around them.</p>
+
+<p>A narrator's name is itself structured. <span class="ar">أحمد بن إدريس</span> is
+two name components joined by <span class="ar">بن</span> ("son of"), which
+establishes parenthood and therefore generation. Chapter 6 shows how this structure
+is exploited to compare names.</p>
+
+<p>Not every element of a chain is a person. <span class="ar">بعض أصحابنا</span>
+("some of our companions") is a collective placeholder, and
+<span class="ar">عليه السلام</span> ("peace be upon him") is an honorific attached
+to the preceding name, not a narrator in its own right. Section 5.5 describes how
+the system distinguishes these, and why failing to do so was the single largest
+source of error in an earlier iteration.</p>
+
+<h2>2.2 The rijal literature</h2>
+
+<p>A rijal entry names a narrator and lists the people who transmitted to and from
+them. Figure 2.2 shows the shape of an entry from <em>Mu'jam Rijal al-Hadith</em>
+of al-Khoei, the biography corpus used here.</p>
+
+<div class="fig">
+<div class="arline">
+٣٥٦ - إبراهيم الشيباني: روى عن أبي الجارود، وروى عنه حرب بن الحسين. التهذيب،
+الجزء ٤، الحديث ٩٨٧.
+</div>
+<table>
+<tr><th style="width:4cm">Element</th><th>Value</th></tr>
+<tr><td>entry number</td><td>356</td></tr>
+<tr><td>subject</td><td class="ar">إبراهيم الشيباني</td></tr>
+<tr><td>teachers (<span class="ar">روى عن</span>)</td><td class="ar">أبي الجارود</td></tr>
+<tr><td>students (<span class="ar">روى عنه</span>)</td><td class="ar">حرب بن الحسين</td></tr>
+<tr><td>source citation</td><td class="ar">التهذيب، الجزء ٤، الحديث ٩٨٧</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 2.2 — The structure of a rijal entry. The teacher/student
+relation is what allows an entry to be located in the narrator graph.</p>
+
+<p>The teacher and student names are the bridge between the two corpora. If the
+graph built from the hadith books says that <span class="ar">إبراهيم الشيباني</span>
+transmitted from <span class="ar">أبي الجارود</span> and to
+<span class="ar">حرب بن الحسين</span>, and a stretch of the rijal book mentions all
+three in close proximity, that stretch is very likely the entry for
+<span class="ar">إبراهيم الشيباني</span> — and its extent can be inferred from where
+those confirmed names begin and end.</p>
+
+<p>It should be said plainly that entries are not always this tidy. Many carry full
+isnads inline, quoting other scholars at length; many are cross-references of the
+form "X: see Y"; and the numbering restarts across sections. Section 7.6 returns to
+this.</p>
+
+<h2>2.3 Why Arabic morphology matters here</h2>
+
+<p>Arabic words are built from a stem with prefixes and suffixes attached
+orthographically, without spaces. The single token <span class="ar">وحدثنا</span>
+is the conjunction <span class="ar">و</span> ("and") plus the stem
+<span class="ar">حدث</span> ("narrated") plus the suffix <span class="ar">نا</span>
+("to us"). A system that matches surface strings against a list of narration
+connectors will miss it; a system that works on morphological analyses will not.</p>
+
+<p>Three specific consequences run through this project.</p>
+
+<p><strong>Connectors must be recognised through their morphology.</strong> The
+lexicons in this system are consulted with both the surface form and the lemma
+supplied by the morphological analyser, so that <span class="ar">وعن</span> matches
+the narration-connector list through its lemma <span class="ar">عن</span>.</p>
+
+<p><strong>Orthographic variation must be normalised before comparison.</strong>
+The several forms of alef (<span class="ar">أ إ آ ا ى</span>) are used
+inconsistently across editions, as are <span class="ar">ة</span>/<span class="ar">ه</span>
+and the presence of diacritics. Section 5.1 describes the normalisation applied, and
+the index mapping that allows offsets in the normalised text to be traced back to
+the original.</p>
+
+<p><strong>A conjunction attached to a name splits narrators.</strong> In
+<span class="ar">سهل بن زياد وإسحاق بن محمد</span> the <span class="ar">و</span>
+prefixed to <span class="ar">إسحاق</span> marks a second, parallel narrator. Detecting
+that prefix — by observing that the lemma lacks the <span class="ar">و</span> that
+the surface form carries — is what prevents the two from being merged into one
+impossible name.</p>
+
+<h2>2.4 The morphological stack: from Sarf to CAMeL and Wojood</h2>
+
+<p>The original system used Sarf, an in-house analyser developed in the same
+research group, backed by a MySQL database of stems, affixes and category
+annotations. Sarf returned, for each word, the set of possible analyses together
+with abstract category bits — <em>Male Names</em>, <em>Compound Names</em>,
+<em>Name of Place</em>, <em>City/Town</em>, <em>POSSESSIVE</em> — and gloss
+descriptions in English that the system matched against ("son", "father",
+"narrate", "listen").</p>
+
+<p>That stack is not practically available today: it requires the database, the
+build environment and the Qt runtime. This project replaces it with two components
+that are maintained and installable.</p>
+
+<table>
+<caption>Table 2.1 — Correspondence between the original and the current
+morphological stack.</caption>
+<tr><th style="width:5.5cm">Original (Sarf + MySQL)</th><th>This system</th></tr>
+<tr><td>Stem/affix analysis, POS</td><td>CAMeL Tools disambiguator (MLE or BERT), giving lemma and POS per token</td></tr>
+<tr><td>Name category bits (<em>Male Names</em>, <em>Compound Names</em>)</td><td>Wojood NER (<code>PERS</code> spans) and CAMeL's <code>noun_prop</code></td></tr>
+<tr><td>Gloss-matched connector lists (<code>NRC_descriptions</code>, <code>familyNMC_descriptions</code>)</td><td>Explicit closed-class lexicons in <code>lexicons.py</code>, consulted on surface form and lemma</td></tr>
+<tr><td><em>Name of Place</em> / <em>City</em> / <em>Country</em> bits</td><td>Not currently replaced — see Section 11.2</td></tr>
+</table>
+
+<p>The substitution is not neutral, and Section 5.4 documents the one place where it
+caused a substantive problem: CAMeL's <code>noun_prop</code> tag is applied far more
+freely than Sarf's name categories were, and accepting it uncritically caused
+ordinary words in the matn to be read as narrators.</p>
+
+<div class="note">
+<strong>A note on what is and is not being claimed.</strong> Replacing the
+morphological layer changes what the system sees, so the numbers this system
+produces are not directly comparable with the published ones even on the same
+books. What is comparable is the <em>shape</em> of the experiment: the same metric
+definitions, the same two conditions, the same ablations. Chapter 10 is written to
+make that distinction explicit rather than to obscure it.
+</div>
+
+<h1>3. The Original System and What Reading It Revealed</h1>
+
+<h2>3.1 ANGE as described in the paper</h2>
+
+<p>ANGE proceeds in four stages. A hadith book is segmented into narrations by a
+finite state machine driven by morphological features. The narrator sequences so
+obtained are merged into a graph, using a hierarchical name-distance metric and a
+multi-key hash to keep the comparison tractable. The same machinery is then run
+over a biography book, with the graph supplying external evidence. Finally, the
+output is scored against human annotation.</p>
+
+<p>The paper reports three result tables: narrator-graph accuracy (Table 1),
+narrator detection and boundary accuracy in biographies with and without the graph
+(Table 2), and biography detection (Table 3), plus a separate figure for partial
+graph annotation — 80% recall, 89% precision — in §4.1.</p>
+
+<h2>3.2 Reading the implementation</h2>
+
+<p>The released implementation is roughly 10,000 lines of C++ in
+<code>src/case/</code>, built on Qt. The correspondence between the paper and the
+code is close in the main, and the port in Chapters 5 to 8 follows it module for
+module. Table 3.1 gives the mapping.</p>
+
+<table>
+<caption>Table 3.1 — Correspondence between the original modules and this
+reimplementation.</caption>
+<tr><th style="width:4.2cm">Concept</th><th style="width:5.8cm">Original</th><th>This system</th></tr>
+<tr><td>Morphological features</td><td><code>hadith_stemmer</code> (hadithCommon.h:140)</td><td><code>engine.py</code></td></tr>
+<tr><td>Segmentation automaton</td><td><code>getNextState</code> (hadithCommon.cpp:587)</td><td><code>fsm.py</code></td></tr>
+<tr><td>Name canonicalisation</td><td><code>preProcessForEquality</code> (narrator_abstraction.h:265)</td><td><code>name_model.py</code></td></tr>
+<tr><td>Distance metric</td><td><code>equalNew</code> (narrator_abstraction.cpp:602)</td><td><code>equality.py</code></td></tr>
+<tr><td>Multi-key hash</td><td><code>NarratorHash</code> (narratorHash.h)</td><td><code>name_hash.py</code></td></tr>
+<tr><td>Graph construction</td><td><code>buildGraph</code> (graph.h:1081)</td><td><code>graph_build.py</code></td></tr>
+<tr><td>Cycle breaking / Split</td><td><code>reMergeNodes</code> (graph.cpp:115)</td><td><code>cycle_breaking.py</code></td></tr>
+<tr><td>Biography automaton</td><td>same FSM, <code>hadith = false</code></td><td><code>bio_fsm.py</code></td></tr>
+<tr><td>Graph lookup</td><td><code>isRealNarrator</code> (biographyGraphUtilities.cpp:4)</td><td><code>narrator_matcher.py</code></td></tr>
+<tr><td>Boundary detection</td><td><code>findChosenBiography</code> (narratordetector.cpp:268)</td><td><code>biography_detector.py</code></td></tr>
+<tr><td>Two-level scoring</td><td><code>AbstractTwoLevelAgreement</code></td><td><code>agreement.py</code></td></tr>
+<tr><td>Graph accuracy (Table 1)</td><td><code>compareGlobalGraphs</code> (hadithInterAnnotatorAgreement.cpp:210)</td><td><code>graph_agreement.py</code></td></tr>
+</table>
+
+<p>Where code and paper disagree, this project follows the code, on the grounds
+that the code is what produced the published numbers. The rest of this chapter
+records where they disagree.</p>
+
+<h2>3.3 Three mechanisms described but not implemented</h2>
+
+<h3>3.3.1 The nisba logic in the distance metric</h3>
+
+<p>Section 3.2 of the paper describes a distance function that reasons about the
+qualifying components of a name: it returns infinity when two qualifiers conflict
+(<span class="ar">العراقي</span>, the Iraqi, against <span class="ar">المصري</span>,
+the Egyptian) and rewards qualifiers that reinforce one another
+(<span class="ar">العراقي</span> with <span class="ar">الكوفي</span>, Kufa being a
+city in Iraq).</p>
+
+<p>That function exists in the source, as <code>getdistance</code> at
+<code>narrator_abstraction.cpp:399</code>, complete with the geographic reasoning
+and the city and country lookups. It is never called; a search of the whole source
+tree finds no call site. The function actually used is <code>equalNew</code> at line
+602, reached through <code>equal()</code> at line 672, and it ends:</p>
+
+<pre>//till now possessives not even compared
+return (double)levelsEqual / levelMax;</pre>
+
+<p>The metric behind the published numbers is therefore a plain ratio of matching
+name levels, with qualifiers ignored.</p>
+
+<h3>3.3.2 A tunable k in the neighbourhood search</h3>
+
+<p>The paper lists <em>k-reachable</em> among its graph algorithms and uses it in the
+biography stage. The parameter exists — <code>bio_max_reachability</code> is declared
+in <code>hadithCommon.h:37</code>, defaulted, and wired to a text box in the
+graphical interface at <code>biographies.h:132</code> — but it is never read. The
+neighbourhood search hardcodes a depth of one, in both directions:</p>
+
+<pre>node-&gt;BFS_traverse(cont, 1,  1);   // one hop, toward children
+node-&gt;BFS_traverse(cont, 1, -1);   // one hop, toward parents</pre>
+
+<p>The operational value of k was therefore always 1.</p>
+
+<h3>3.3.3 The sequential ambiguity constraint</h3>
+
+<p>Section 4 of the paper states two measures for resolving an ambiguous name in a
+biography: thresholding on the hash score, and restricting the matches of narrator
+<em>n<sub>i</sub></em> to those within k steps of the matches of
+<em>n<sub>i−1</sub></em>. The first is implemented, as <code>LocateInGraphAction</code>
+keeping the highest-similarity nodes. The second appears nowhere in
+<code>narratordetector.cpp</code>; the linking path makes no reference to the
+preceding narrator at all.</p>
+
+<h2>3.4 Two defects in the released code</h2>
+
+<h3>3.4.1 updateGroups discards the better candidate</h3>
+
+<p>This routine (<code>narratordetector.cpp:158</code>) maintains the top three
+candidate biographies for a narrator:</p>
+
+<pre>bool add = false;
+for (int i = 0; i &lt; groups.size(); i++) {
+    if (groups[i].score &lt; set.score) { add = true; }
+    else if (add) { groups.insert(i, set); break; }
+}
+if (groups.size() &gt; MAX_SIZE) { groups.removeLast(); }
+else if (!add &amp;&amp; groups.size() &lt; MAX_SIZE) { groups.append(set); return true; }
+return add;</pre>
+
+<p>Trace it on a list held in descending order. If the incoming set scores higher
+than the first element, <code>add</code> is set on the first iteration. On the next
+iteration the same comparison holds — the list is descending — so <code>add</code> is
+set again and the <code>else if</code> branch is never reached. The loop ends with
+nothing inserted; the size check then fails, the <code>!add</code> branch is skipped,
+and the function returns having discarded the set. Only a set scoring lower than
+everything already present reaches the <code>append</code>.</p>
+
+<p>The routine therefore retains its worst candidates and drops its best. This
+reimplementation implements the evident intention — retain the highest-scoring N —
+and records the divergence.</p>
+
+<h3>3.4.2 Dead code in the boundary path</h3>
+
+<p><code>getBoundingParagraph</code> and <code>isInsideBound</code>
+(<code>narratordetector.cpp:213–266</code>) are defined but never called. They would
+have constrained a detected biography to lie within a paragraph. The paragraph
+delimiters that <code>additionalCheck</code> collects at line 378 are consequently
+gathered and never used. This system still collects them, since they are useful for
+inspection, but does not invent a use for them.</p>
+
+<h2>3.5 The gold annotations are not in the published repository</h2>
+
+<p>The evaluation files are excluded by <code>.gitignore</code>, lines 1–5:</p>
+
+<pre>*.por
+*.narr
+*.names
+*.tags</pre>
+
+<p>They are absent from the working tree and from the archive shipped alongside it.
+Tables 1 to 3 are therefore not reproducible from the published material by anyone,
+including its authors. The drafts in the repository describe the method — "manual
+verification of the correctness of 10% of the narrations"
+(<code>tex/hadith.ijcnlp.tex:1007</code>) — and one draft carries an unwritten note to
+itself at line 1010:</p>
+
+<pre>(discuss annotation and verification process and mention smg about
+ inter-annotator agreement)</pre>
+
+<p>The published paper acknowledges the consequence in its results section: a
+"conservative decision by the manual annotator" depressed the reported precision,
+and "further studies should accommodate several manual annotators and report on
+inter-annotation agreement".</p>
+
+<p>Two things follow. Producing a gold annotation is a deliverable of this project
+rather than a gap in it; and there is a clear methodological opening, since
+annotating a slice twice and reporting agreement closes a limitation the original
+authors state but did not address. Section 8.5 specifies the format and Section 10.1
+the protocol.</p>
+
+<h1>4. System Architecture</h1>
+
+<h2>4.1 Overview</h2>
+
+<p>The system is a pipeline of four stages, each producing a persistent artefact
+that the next consumes. Keeping the intermediates on disk matters practically: the
+morphological analysis of a full book takes minutes, while the graph stage is re-run
+far more often than segmentation.</p>
+
+<div class="fig">
+<table style="font-size:9.5pt;">
+<tr>
+  <td class="boxk" style="width:19%">HADITH BOOK<br><span class="small">raw .txt</span></td>
+  <td class="arrow" style="width:4%">&rarr;</td>
+  <td class="box" style="width:27%"><strong>Stage 1</strong><br>normalise &middot; analyse &middot; FSM<br><span class="small">segmenter.py</span></td>
+  <td class="arrow" style="width:4%">&rarr;</td>
+  <td class="boxk" style="width:19%">CHAINS<br><span class="small">.hadiths.json</span></td>
+</tr>
+<tr><td colspan="5" class="arrow">&darr;</td></tr>
+<tr>
+  <td class="boxk">&nbsp;</td>
+  <td class="arrow">&nbsp;</td>
+  <td class="box"><strong>Stage 2</strong><br>canonise &middot; hash &middot; merge &middot; split &middot; rank<br><span class="small">narrator_graph.py</span></td>
+  <td class="arrow">&rarr;</td>
+  <td class="boxk">NARRATOR GRAPH<br><span class="small">.graph.json</span></td>
+</tr>
+<tr><td colspan="5" class="arrow">&darr;</td></tr>
+<tr>
+  <td class="boxk">RIJAL BOOK<br><span class="small">raw .txt</span></td>
+  <td class="arrow">&rarr;</td>
+  <td class="box"><strong>Stage 3</strong><br>biography automaton, graph in the loop<br>
+      <span class="small">bio_fsm &middot; narrator_matcher &middot; biography_detector</span></td>
+  <td class="arrow">&rarr;</td>
+  <td class="boxk">ANNOTATED<br>BIOGRAPHIES</td>
+</tr>
+<tr><td colspan="5" class="arrow">&darr;</td></tr>
+<tr>
+  <td class="boxk">GOLD<br><span class="small">human annotation</span></td>
+  <td class="arrow">&rarr;</td>
+  <td class="box"><strong>Stage 4</strong><br>segmentation &middot; detection &middot; boundary &middot; merge accuracy<br>
+      <span class="small">agreement &middot; graph_agreement &middot; gold</span></td>
+  <td class="arrow">&rarr;</td>
+  <td class="boxk">TABLES 1&ndash;3</td>
+</tr>
+</table>
+</div>
+<p class="figcap">Figure 4.1 — Pipeline overview. Stage 3 is the only stage that
+consumes the output of a different corpus; that dependency is the cross-document
+mechanism this project is about.</p>
+
+<h2>4.2 Design decisions</h2>
+
+<p><strong>Offsets, not copies.</strong> Every structure stores character offsets
+into the normalised text rather than copies of it, as the original did with its
+<code>m_start</code> and <code>m_end</code> fields. The text exists once. This is
+what makes span-level agreement scoring possible at all, and it is why the
+normalisation step returns an index map back into the original document.</p>
+
+<p><strong>Subclassing rather than mode flags.</strong> The original threads a
+<code>hadith</code> boolean through every branch of a 500-line state function. Here
+the biography automaton is a subclass overriding the five behaviours that genuinely
+differ (Section 7.2), so the hadith path is provably unaffected by work on the
+biography side.</p>
+
+<p><strong>A separable NLP layer.</strong> Nothing below <code>engine.py</code>
+imports CAMeL or Wojood. Token features are a plain dataclass, so the automaton and
+the graph algorithms can be exercised with hand-constructed features. All 165 tests
+run without the models installed — a deliberate choice, since it means a regression
+surfaces in seconds rather than after a multi-hour book run.</p>
+
+<p><strong>Faithful and improved variants are switchable.</strong> Wherever this
+system departs from the original, the departure is a parameter and the faithful
+behaviour remains reachable. Section 9.3 lists the switches.</p>
+
+<h2>4.3 Data model</h2>
+
+<p>The core structures mirror the original class hierarchy in
+<code>narrator_abstraction.h</code>.</p>
+
+<table>
+<caption>Table 4.1 — Core data structures.</caption>
+<tr><th style="width:4.6cm">Type</th><th>Holds</th></tr>
+<tr><td><code>NamePrim</code></td><td>one name word, with offsets</td></tr>
+<tr><td><code>NameConnector</code></td><td>a connector inside a name — <span class="ar">بن</span>, <span class="ar">أبو</span>, <span class="ar">أم</span>, a nisba — with its kind</td></tr>
+<tr><td><code>Narrator</code></td><td>an ordered list of the two above, with flags for rasoul and relative narrators</td></tr>
+<tr><td><code>NarratorConnector</code></td><td>the narration word between two narrators</td></tr>
+<tr><td><code>Chain</code></td><td>the sanad: narrators and connectors in text order</td></tr>
+<tr><td><code>Hadith</code></td><td>number, chain, matn span</td></tr>
+<tr><td><code>ChainNarratorNode</code></td><td>one narrator <em>occurrence</em> in one chain</td></tr>
+<tr><td><code>GroupNode</code></td><td>occurrences sharing an identical canonical key — the atomic merge unit</td></tr>
+<tr><td><code>GraphNarratorNode</code></td><td>one person: a set of groups, plus edges and a generation rank</td></tr>
+</table>
+
+<h1>5. Stage 1 — From Book to Chains</h1>
+
+<h2>5.1 Normalisation</h2>
+
+<p>Arabic editions vary orthographically in ways that defeat string comparison.
+Normalisation removes diacritics, tatweel and zero-width joiners; unifies the alef
+forms and the hamza carriers; maps <span class="ar">ة</span> to
+<span class="ar">ه</span>; turns stray symbols into spaces; and collapses runs of
+whitespace.</p>
+
+<p>Because everything downstream is offsets, the function returns both the cleaned
+text and an index map: entry <em>i</em> of the map gives the position in the original
+document of character <em>i</em> of the cleaned text. Any span the system reports can
+therefore be shown to a reader in the original edition, diacritics and all.</p>
+
+<table>
+<caption>Table 5.1 — Representative normalisation effects.</caption>
+<tr><th style="width:7cm">Original</th><th>Normalised</th></tr>
+<tr><td class="ar">حَدَّثَنَا</td><td class="ar">حدثنا</td></tr>
+<tr><td class="ar">أحمد / إسحاق / آمنة</td><td class="ar">احمد / اسحاق / امنه</td></tr>
+<tr><td class="ar">معاوية</td><td class="ar">معاويه</td></tr>
+<tr><td class="ar">قال: "يا جابر"</td><td class="ar">قال: يا جابر</td></tr>
+</table>
+
+<h2>5.2 The feature layer</h2>
+
+<p><code>engine.py</code> answers, for every token, the question the automaton needs
+answered: what kind of thing is this word? It replaces the entire Sarf and MySQL
+stack, producing the same flags the original's <code>hadith_stemmer</code> raised.</p>
+
+<table>
+<caption>Table 5.2 — Token features and their sources.</caption>
+<tr><th style="width:3.6cm">Feature</th><th style="width:5cm">Meaning</th><th>Source</th></tr>
+<tr><td><code>lemma</code>, <code>pos</code></td><td>morphological analysis</td><td>CAMeL Tools</td></tr>
+<tr><td><code>is_name</code></td><td>part of a person's name</td><td>Wojood <code>PERS</code>; CAMeL <code>noun_prop</code>, gated per §5.4; context rules; compound phrases</td></tr>
+<tr><td><code>is_nrc</code></td><td>narration connector</td><td>lexicon, on surface form and lemma</td></tr>
+<tr><td><code>is_nmc</code>, <code>is_ibn</code>, <code>is_ab</code>, <code>is_om</code></td><td>name connector and its kind</td><td>lexicon</td></tr>
+<tr><td><code>is_rasoul</code></td><td>reference to the Prophet, or an honorific</td><td>lexicon and phrase matching</td></tr>
+<tr><td><code>is_relative</code></td><td>relative narrator (<span class="ar">أبيه</span>, <span class="ar">جده</span>)</td><td>lexicon</td></tr>
+<tr><td><code>has_waw</code></td><td>carries a conjunction prefix</td><td>surface form versus lemma</td></tr>
+<tr><td><code>has_enclitic</code></td><td>carries a pronominal suffix</td><td>CAMeL <code>enc0</code></td></tr>
+</table>
+
+<p>Two of these deserve comment. <code>has_waw</code> is detected by observing that
+the surface form begins with <span class="ar">و</span> while the lemma does not; when
+it is set the conjunction is stripped from the stored token and the offset shifted,
+so the name entering the graph is <span class="ar">إسحاق</span> and not
+<span class="ar">وإسحاق</span>. Without this the same person written with and without
+the conjunction would never merge.</p>
+
+<p><code>has_enclitic</code> reproduces a test the original performed through Sarf's
+suffix analysis: a word carrying a pronominal suffix is not a bare proper name. Its
+use is described in Section 5.4.</p>
+
+<h2>5.3 The finite state machine</h2>
+
+<p>The automaton walks the token stream and decides where sanads begin and end. It
+has five states, matching the original's <code>StateType</code> enumeration.</p>
+
+<table>
+<caption>Table 5.3 — States of the segmentation automaton.</caption>
+<tr><th style="width:2.8cm">State</th><th>Meaning</th></tr>
+<tr><td>TEXT</td><td>ordinary text; waiting for a chain to start</td></tr>
+<tr><td>NAME</td><td>inside a narrator's name</td></tr>
+<tr><td>NMC</td><td>after a name connector — <span class="ar">بن</span>, <span class="ar">أبو</span></td></tr>
+<tr><td>NRC</td><td>after a narration connector — <span class="ar">عن</span>, <span class="ar">حدثنا</span></td></tr>
+<tr><td>STOP</td><td>reached the Prophet or an Imam; the sanad is complete</td></tr>
+</table>
+
+<div class="fig">
+<table style="font-size:9pt;">
+<tr><th style="width:2.4cm">from \ sees</th><th>NAME</th><th>NMC</th><th>NRC</th><th>RASOUL</th><th>other</th></tr>
+<tr><td class="boxk">TEXT</td><td>&rarr; NAME <span class="small">(a)</span></td><td>&rarr; NMC <span class="small">(b)</span></td><td>&rarr; NRC</td><td>&rarr; STOP</td><td>stay</td></tr>
+<tr><td class="boxk">NAME</td><td>stay <span class="small">(multi-word)</span></td><td>&rarr; NMC</td><td>&rarr; NRC <span class="small">(d)</span></td><td>&rarr; STOP</td><td>&rarr; NMC <span class="small">(tolerated)</span></td></tr>
+<tr><td class="boxk">NMC</td><td>&rarr; NAME</td><td>stay <span class="small">(e)</span></td><td>&rarr; NRC</td><td>&rarr; STOP</td><td>stay, count++ <span class="small">(e)</span></td></tr>
+<tr><td class="boxk">NRC</td><td>&rarr; NAME <span class="small">(new narrator)</span></td><td>&rarr; NMC <span class="small">(f)</span></td><td>stay, count++</td><td>&rarr; STOP</td><td>count++ <span class="small">(g)</span></td></tr>
+<tr><td class="boxk">STOP</td><td colspan="4">a non-honorific token ends the chain &rarr; TEXT</td><td>extend</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 5.1 — Transition table. (a) a name may open a chain only
+after a sentence boundary; (b) likewise for a family connector; (d) after
+<span class="ar">عن</span> a name is expected immediately; (e) up to
+<code>nmc_max</code> non-name words are tolerated inside a name, with one further
+chance if a family connector was seen; (f) a connector after a narration word opens
+a new narrator; (g) up to <code>nrc_max</code> words between narrators before the
+attempt is abandoned.</p>
+
+<p>The two tolerance counters are what make the automaton robust to unrecognised
+words without letting it run away into the matn. A chain attempt ends when an
+honorific is reached, when a sentence boundary occurs, or when either counter
+overflows; the segmenter accepts the attempt if it holds at least
+<code>narr_min</code> narrators.</p>
+
+<h3>5.3.1 Worked example</h3>
+
+<table>
+<caption>Table 5.4 — Automaton trace over the opening of hadith 3. Offsets omitted
+for readability.</caption>
+<tr><th style="width:2.8cm">Token</th><th style="width:2.8cm">Features</th><th style="width:2.2cm">State after</th><th>Action</th></tr>
+<tr><td class="ar">أحمد</td><td>NAME</td><td>NAME</td><td>open narrator 1</td></tr>
+<tr><td class="ar">بن</td><td>NMC / IBN</td><td>NMC</td><td>add connector</td></tr>
+<tr><td class="ar">إدريس</td><td>NAME</td><td>NAME</td><td>add name word</td></tr>
+<tr><td class="ar">عن</td><td>NRC</td><td>NRC</td><td>close narrator 1</td></tr>
+<tr><td class="ar">محمد</td><td>NAME</td><td>NAME</td><td>open narrator 2</td></tr>
+<tr><td colspan="4" style="text-align:center">&hellip;</td></tr>
+<tr><td class="ar">أبي</td><td>NMC / AB</td><td>NMC</td><td>open narrator 4 with a kunya</td></tr>
+<tr><td class="ar">عبد</td><td>NAME</td><td>NAME</td><td>add name word</td></tr>
+<tr><td class="ar">الله</td><td>NAME</td><td>NAME</td><td>add name word</td></tr>
+<tr><td class="ar">عليه</td><td>RASOUL</td><td>STOP</td><td>honorific; attaches, not a narrator</td></tr>
+<tr><td class="ar">السلام</td><td>RASOUL</td><td>STOP</td><td>extends the honorific</td></tr>
+<tr><td class="ar">قال</td><td>&mdash;</td><td>TEXT</td><td>chain ends; the matn begins here</td></tr>
+</table>
+
+<h2>5.4 Gating the name evidence</h2>
+
+<p>This section documents the most consequential correction made during the port.
+The reasoning is worth setting out, because the failure was not obvious from the
+output.</p>
+
+<p>An early version accepted CAMeL's <code>noun_prop</code> tag as sufficient
+evidence that a token was a name, wherever it occurred. CAMeL applies that tag
+generously. The result was that ordinary words in the matn —
+<span class="ar">الله</span>, <span class="ar">العقل</span> — were read as narrators;
+three in a row satisfied <code>narr_min</code>; and the automaton emitted a sanad
+that did not exist. On the first volume of <em>al-Kafi</em> this produced 436
+narrations that could not be matched to a hadith number, of which roughly 187 were
+pure matn.</p>
+
+<p>The original does not trust its equivalent category either. The bit for the weak
+name category is deliberately excluded from the set of accepted name categories
+(<code>hadithCommon.cpp:117–133</code>) and admitted only while a flag named
+<code>tryToLearnNames</code> is set — that is, only where a name is already expected.
+Four such positions exist:</p>
+
+<ol>
+<li>the current word is a family connector (<code>cpp:1160</code>);</li>
+<li>the automaton is just past a narration word, at most one connector deep, and
+that connector was not merely punctuation (<code>cpp:1172</code>);</li>
+<li>the previous word was a narration word (<code>cpp:1178</code>);</li>
+<li>the word has the form of a nisba — beginning <span class="ar">ال</span> and
+ending <span class="ar">ي</span> — in a narration or name context
+(<code>cpp:1227</code>).</li>
+</ol>
+
+<p>Two further filters apply in every case: the word must carry no suffix, and its
+stem must be at least three characters long.</p>
+
+<p>This system reproduces that gate. A bare <code>noun_prop</code> now sets a
+<em>candidate</em> flag rather than <code>is_name</code>; a later pass promotes
+candidates in the four contexts above, subject to the same two filters, and records
+the promotion in the token's provenance list so that it remains visible in the
+output. Strong evidence — a Wojood <code>PERS</code> span, a known compound name — is
+accepted without gating, as before.</p>
+
+<table>
+<caption>Table 5.5 — Effect of the gate, taken from the regression tests.</caption>
+<tr><th style="width:9cm">Input</th><th>Names accepted</th></tr>
+<tr><td class="ar">لما خلق الله العقل استنطقه &nbsp;<span style="font-family:Cambria">(matn prose)</span></td><td>none</td></tr>
+<tr><td class="ar">عن أحمد بن محمد عن الحسن بن محبوب &nbsp;<span style="font-family:Cambria">(sanad)</span></td><td class="ar">أحمد، محمد، الحسن، محبوب</td></tr>
+<tr><td class="ar">عن الكوفي &nbsp;<span style="font-family:Cambria">(nisba after a narration word)</span></td><td class="ar">الكوفي</td></tr>
+<tr><td>a word carrying an enclitic, after <span class="ar">عن</span></td><td>none</td></tr>
+</table>
+
+<h2>5.5 Honorifics are not narrators</h2>
+
+<p>The second substantive correction concerns <span class="ar">عليه السلام</span>.</p>
+
+<p>The original keeps two lexicon files. <code>src/case/stop_words</code> lists
+references to the Prophet himself — <span class="ar">رسول الله</span>,
+<span class="ar">الرسول</span>, <span class="ar">النبي</span> — and these both end the
+sanad and mark the narrator. <code>src/case/phrases</code> lists honorific
+expressions — <span class="ar">عليه السلام</span>, <span class="ar">رضي الله عنه</span>
+— which are treated as compound units and are <em>not</em> narrators.</p>
+
+<p>An early version of this system merged the two lists. Because Shia sanads
+terminate at an Imam rather than at the Prophet, treating
+<span class="ar">عليه السلام</span> as a sanad terminator is a reasonable adaptation
+to this corpus; the error lay in also letting it become a person. Measured on the
+first volume of <em>al-Kafi</em>: of 8,986 narrator positions, 1,031 — 11.5% —
+consisted of the bare honorific. It became the largest node in the narrator graph,
+with 1,116 occurrences and 143 outgoing edges, and a significant source of the
+impossible cycles discussed in Section 6.6.</p>
+
+<p>The rule now implemented is that an honorific is never a narrator. A reference to
+the Prophet closes any open name and opens his node; a bare honorific contributes
+nothing and does not set the rasoul flag. The second point matters more than it
+appears, because the rasoul flag collapses every flagged narrator into a single
+graph node: marking <span class="ar">أبي عبد الله عليه السلام</span> as rasoul would
+fuse Imam al-Sadiq with Imam al-Baqir.</p>
+
+<div class="note">
+The honorific is also excluded from the stored name. Appending it would change the
+name's canonical key, so that <span class="ar">أبي عبد الله عليه السلام</span> and
+<span class="ar">أبي عبد الله</span> would fall into different hash buckets and never
+be compared — trading a visible error for a silent one.
+</div>
+
+<h2>5.6 Output of the stage</h2>
+
+<p>The stage writes one JSON file per book: for each accepted hadith, its number,
+the kitab and bab headings in force at that point, the narrators with their offsets,
+and the matn span. A readable text dump is written alongside for inspection, as the
+original wrote <code>hadith_chains.txt</code>.</p>
+
+<p>A separate quality filter then removes narrations showing no structural evidence
+of being a sanad — no <span class="ar">بن</span> anywhere, no honorific ending, no
+narration connector between narrators. On the first volume this removed 186 of 1,740
+candidates while dropping none of the 1,304 that carried a verified hadith number.</p>
+
+<h1>6. Stage 2 — The Narrator Graph</h1>
+
+<p>Stage 1 yields a list of chains. Each chain names people, but the same person
+appears in hundreds of chains, written differently each time. This stage decides
+which occurrences are the same human being, and connects them.</p>
+
+<h2>6.1 Canonicalising a name</h2>
+
+<p>An Arabic narrator name is not a flat string. It is a sequence of name components
+separated by <span class="ar">بن</span> ("son of"), which establishes descent, with
+qualifying components — a <em>nisba</em> of origin such as
+<span class="ar">الكوفي</span> — attached at the end. Canonicalisation splits the
+name into <em>levels</em>, one per generation.</p>
+
+<div class="fig">
+<table>
+<tr><th style="width:5.5cm">Name</th><th>Canonical form</th></tr>
+<tr><td class="ar">عمارة بن القعقاع بن شبرمة</td>
+    <td>[ <span class="ar">عمارة</span> ] | [ <span class="ar">القعقاع</span> ] | [ <span class="ar">شبرمة</span> ]</td></tr>
+<tr><td class="ar">محمد بن يعقوب الكليني</td>
+    <td>[ <span class="ar">محمد</span> ] | [ <span class="ar">يعقوب</span> ] &nbsp; { <span class="ar">الكليني</span> }</td></tr>
+<tr><td class="ar">أبو جعفر</td>
+    <td>[ &lt;AB&gt; + <span class="ar">جعفر</span> ]</td></tr>
+<tr><td class="ar">ابن أبي عمير</td>
+    <td>[ &nbsp; ] | [ &lt;AB&gt; + <span class="ar">عمير</span> ]</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 6.1 — Canonical forms. Levels are separated by <code>|</code>;
+qualifiers appear in braces. The last row has an <em>empty</em> first level, because
+the person's own given name is unknown — the name begins with "son of".</p>
+
+<p>Three details in this figure carry weight later.</p>
+
+<p><strong>Kunya connectors stay in the level.</strong> <span class="ar">أبو</span>
+and <span class="ar">أم</span> are not discarded; they occupy a slot in the level and
+are written as the tokens <code>AB</code> and <code>OM</code> when a key is built.
+This collapses the case variants <span class="ar">أبو</span>,
+<span class="ar">أبي</span>, <span class="ar">أبا</span> onto one token while keeping
+<span class="ar">أبو جعفر</span> distinct from a person simply named
+<span class="ar">جعفر</span>. An early version of this port discarded them, on the
+strength of a code comment claiming the original did so; reading
+<code>isFamilyConnector()</code> at <code>narrator_abstraction.h:152</code> showed
+that it returns true for the kunya connectors as well, and that they are appended
+into the level. With them discarded, <span class="ar">أبو جعفر</span> scored a
+perfect match against <span class="ar">جعفر</span>.</p>
+
+<p><strong>A leading empty level is meaningful.</strong> It records that the first
+name is unknown. The original encodes this as a leading hyphen in the key and uses
+it to skip such names when choosing the subject of a biography entry, since a name
+that does not identify its bearer cannot identify an entry either.</p>
+
+<p><strong>Each level slot remembers whether it is a name or a connector.</strong>
+The comparison in the next section needs that distinction, and it cannot be
+recovered from the strings alone.</p>
+
+<h2>6.2 The distance metric</h2>
+
+<p>Two canonical forms are compared level by level, up to the length of the shorter.
+Within a level, slots are compared pairwise:</p>
+
+<ul>
+<li>if both slots are connectors, the pair is <em>skipped</em> — this is what allows
+<span class="ar">أبو جعفر</span> and <span class="ar">أبي جعفر</span> to match;</li>
+<li>if the slots differ in kind, or the words differ after alef normalisation, the
+comparison <em>rejects outright</em> and the score is zero;</li>
+<li>otherwise the level counts as agreeing.</li>
+</ul>
+
+<p>The score is the number of agreeing levels divided by the number of levels in the
+longer name. The hard rejection is the important half: it is what the paper means by
+returning infinity when components conflict at the same level.</p>
+
+<table>
+<caption>Table 6.1 — The metric on representative pairs, with normalised edit
+distance for comparison.</caption>
+<tr><th style="width:4.6cm">A</th><th style="width:4.6cm">B</th><th>metric</th><th>edit</th><th>correct?</th></tr>
+<tr><td class="ar">محمد بن يعقوب</td><td class="ar">محمد بن يعقوب الكليني</td><td>1.00</td><td>0.62</td><td>same person</td></tr>
+<tr><td class="ar">علي بن إبراهيم</td><td class="ar">علي بن إبراهيم بن هاشم</td><td>0.67</td><td>0.64</td><td>same person</td></tr>
+<tr><td class="ar">محمد بن يعقوب</td><td class="ar">محمد بن الحسن</td><td>0.00</td><td>0.62</td><td>different</td></tr>
+<tr><td class="ar">خالد بن سعيد</td><td class="ar">خالد بن سعد</td><td>0.00</td><td>0.92</td><td>different</td></tr>
+<tr><td class="ar">أبو جعفر</td><td class="ar">جعفر</td><td>0.00</td><td>0.50</td><td>different</td></tr>
+</table>
+
+<p>The last two rows are the paper's argument in miniature. Edit distance rates
+<span class="ar">خالد بن سعيد</span> and <span class="ar">خالد بن سعد</span> at 0.92 —
+they differ by one letter — while the structural metric rejects them, because the
+grandfather level conflicts. Conversely edit distance rates a name and the same name
+with a nisba at only 0.62, because the added word is long, while the structural
+metric sees them as identical.</p>
+
+<p>The metric also has a visible weakness, and the evaluation is designed to expose
+rather than hide it. A two-level name scores 0.67 against a three-level name sharing
+its prefix, so <span class="ar">أحمد بن محمد</span> matches both
+<span class="ar">أحمد بن محمد بن عيسى</span> and
+<span class="ar">أحمد بن محمد بن خالد</span> — who are different people. Section 11.1
+returns to this.</p>
+
+<h2>6.3 The multi-key hash</h2>
+
+<p>Comparing every occurrence with every other is quadratic. On the corpus used here
+that is roughly nine thousand occurrences, so on the order of forty million
+comparisons for a single volume, and the full corpus is several times larger. The
+original's solution, reproduced here, is to index each name under several keys — one
+for each sub-name that could plausibly refer to the same person — and compare only
+names that share a key.</p>
+
+<div class="fig">
+<table>
+<tr><th style="width:6.5cm">Key generated for <span class="ar">عمارة بن القعقاع الكوفي</span></th><th>Relevance</th></tr>
+<tr><td class="ar">عمارة-القعقاع:الكوفي</td><td>1.00</td></tr>
+<tr><td class="ar">عمارة-القعقاع</td><td>0.50</td></tr>
+<tr><td class="ar">عمارة:الكوفي</td><td>0.33</td></tr>
+<tr><td>-<span class="ar">القعقاع:الكوفي</span></td><td>0.33</td></tr>
+<tr><td class="ar">عمارة</td><td>0.17</td></tr>
+<tr><td>-<span class="ar">القعقاع</span></td><td>0.17</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 6.2 — Keys generated for one narrator, after Figure 4 of the
+original paper. A leading hyphen marks a key whose first level has been dropped.
+Relevance is the completeness of the sub-name, and is used to rank candidates.</p>
+
+<p>Two occurrences that share any key become candidates; the metric of Section 6.2
+then decides. Because a short form such as <span class="ar">عمارة</span> generates a
+key that the full form also generates, an abbreviated mention still finds its fuller
+counterpart.</p>
+
+<h2>6.4 Merging</h2>
+
+<p>The construction is two-stage, following <code>buildGraph</code>. Occurrences
+whose canonical keys are <em>identical</em> join the same group without scoring.
+Otherwise a new group is opened and matched, through the hash, against existing
+people; the best-scoring candidate above the threshold absorbs it, and if none
+qualifies the group becomes a new person.</p>
+
+<p>Two vetoes constrain every merge. Both come from <code>mustMerge</code> at
+<code>graph.h:900–924</code>, and neither was present in an earlier version of this
+port.</p>
+
+<p><strong>A person may not appear twice in one chain.</strong> A narrator cannot
+have transmitted to himself, so if a candidate person already holds an occurrence
+from the chain under consideration, the merge is refused. Without this veto,
+narrators merged with their own neighbours, producing self-loops that then surfaced
+as impossible cycles. Measured before the veto was restored: 76 violations on the
+first volume.</p>
+
+<p><strong>The group must not span more than <em>r</em> generations.</strong>
+Position within a sanad approximates distance from the source, so two occurrences at
+very different positions are unlikely to be the same person. The test is on the
+<em>span</em> of the whole group once the new occurrence joins:</p>
+
+<pre>lowest  = min(new_position, group.lowest)
+highest = max(new_position, group.highest)
+accept  if  highest - lowest &lt;= equality_radius</pre>
+
+<p>An earlier version tested instead whether <em>any</em> existing occurrence lay
+within <em>r</em>, which permits a group to ratchet across generations one hop at a
+time — position 0 merging with 3, then 3 with 6, then 6 with 9. One node had reached
+a span of twelve. Measured before the correction: 99 groups exceeded the radius.</p>
+
+<h2>6.5 Three levels of node</h2>
+
+<p>The paper defines <em>Split</em> as the inverse of <em>Merge</em>: a merged node
+<em>m</em>(n<sub>1</sub>…n<sub>k</sub>) is divided into
+<em>m</em><sub>1</sub>(n<sub>1</sub>…n<sub>i</sub>) and
+<em>m</em><sub>2</sub>(n<sub>i+1</sub>…n<sub>k</sub>). An operation of that form needs
+indivisible pieces to redistribute, and that is what the middle node type provides.</p>
+
+<div class="fig">
+<table style="font-size:9.5pt;">
+<tr>
+  <td class="box" style="width:30%">ChainNarratorNode<br><span class="small">one occurrence in one chain</span></td>
+  <td class="arrow" style="width:6%">&rarr;</td>
+  <td class="box" style="width:30%">GroupNode<br><span class="small">occurrences with an <strong>identical</strong> key</span></td>
+  <td class="arrow" style="width:6%">&rarr;</td>
+  <td class="box" style="width:28%">GraphNarratorNode<br><span class="small">one person: a set of groups</span></td>
+</tr>
+<tr>
+  <td class="small">many per person</td><td></td>
+  <td class="small"><strong>atomic</strong> — never split</td><td></td>
+  <td class="small">carries edges and rank</td>
+</tr>
+</table>
+</div>
+<p class="figcap">Figure 6.3 — The node hierarchy. A group's members share one exact
+written name, so no evidence can separate them; a split therefore redistributes
+groups, never individual occurrences.</p>
+
+<p>An earlier version of this port collapsed the hierarchy to two levels, leaving
+the middle type as an unused stub. Split then degenerated into removing one
+occurrence at a time, which cannot undo a bad fusion and offers no guarantee of
+progress.</p>
+
+<h2>6.6 Cycles and splitting</h2>
+
+<p>Narration flows forward in time, so the graph must be acyclic. A cycle means the
+merge stage fused two different people. The original's response, reproduced here, is
+to dissolve the offending person into its groups and re-merge them pairwise at a
+stricter threshold, in three passes with the threshold rising each time. Groups that
+no longer clear the higher bar emerge as separate people.</p>
+
+<p>Two properties matter. Because groups are atomic, the partition can only become
+finer, so the procedure terminates. And no edge is ever deleted: a narration
+relation is evidence, and cycles are resolved by re-partitioning nodes rather than
+by discarding data. An earlier version of this port deleted an edge when a split
+failed, and — worse — rebuilt every edge from the chains immediately after the
+cycle-breaking loop, which silently undid the whole procedure. Measured at the time:
+771 back-edges survived a run that reported having broken cycles.</p>
+
+<h2>6.7 Generation ranks</h2>
+
+<p>Each person is assigned a rank: zero for a source, and otherwise one more than the
+highest rank among the people they transmitted from. The property that matters is
+monotonicity — every edge must run from a lower rank to a higher one, or the notion
+of generation carries no information.</p>
+
+<p>This requires a longest-path relaxation over the acyclic part, computed here in
+topological order. A shortest-path search, which an earlier version used, breaks
+monotonicity: a person reachable by both a one-hop and a four-hop route receives
+rank 1, and the four-hop edge then runs backwards.</p>
+
+<h2>6.8 The graph in practice</h2>
+
+<p>Table 6.2 gives the effect of the corrections in Sections 6.1 to 6.7 on the first
+volume of <em>al-Kafi</em>, at an equality threshold of 0.5 and a radius of 3.</p>
+
+<table>
+<caption>Table 6.2 — Graph construction before and after the corrections.</caption>
+<tr><th style="width:7cm">Measure</th><th>before</th><th>after</th></tr>
+<tr><td>distinct people</td><td>1,634</td><td>1,714</td></tr>
+<tr><td>occurrences per person</td><td>5.70</td><td>5.24</td></tr>
+<tr><td>same-chain merges (must be 0)</td><td>76</td><td><strong>0</strong></td></tr>
+<tr><td>groups exceeding the radius (must be 0)</td><td>99</td><td><strong>0</strong></td></tr>
+<tr><td>edges</td><td>3,651</td><td>3,962</td></tr>
+</table>
+
+<p>Figure 6.4 shows a fragment of the resulting graph around one heavily attested
+narrator, taken directly from the built artefact.</p>
+
+<div class="fig">
+<table style="font-size:9.5pt;">
+<tr><td class="boxk" colspan="3"><span class="ar">أبي عبد الله</span> &nbsp; <span class="small">(346 occurrences, rank 0 — a source)</span></td></tr>
+<tr><td colspan="3" class="arrow">&darr; &nbsp;<span class="small">transmitted to (180 students in total; four shown)</span></td></tr>
+<tr>
+ <td class="box"><span class="ar">علي بن إبراهيم بن هاشم</span></td>
+ <td class="box"><span class="ar">محمد بن يحيى</span></td>
+ <td class="box"><span class="ar">محمد بن الحسن</span></td>
+</tr>
+<tr><td colspan="3" class="arrow">&darr;</td></tr>
+<tr><td class="box" colspan="3"><span class="ar">أحمد بن محمد</span> &nbsp;<span class="small">(and further generations)</span></td></tr>
+</table>
+</div>
+<p class="figcap">Figure 6.4 — A fragment of the narrator graph built from
+<em>al-Kafi</em> vol. 1. Edges run from a transmitter to those who transmitted from
+them. The full graph can be exported to Graphviz for inspection.</p>
+
+<h1>7. Stage 3 — The Biography Stage</h1>
+
+<p>This is where the cross-document mechanism operates, and it is the part of the
+original system that had no counterpart in this project before the present work.</p>
+
+<h2>7.1 The task</h2>
+
+<p>A rijal book is continuous prose. The task is to determine where each entry
+begins and ends, and which narrator it describes. Doing so from the text alone is
+the problem the original reports at 41% boundary recall: the automaton can find
+names, but nothing in the prose tells it whether the next name still belongs to the
+current entry or begins the next one.</p>
+
+<h2>7.2 The same automaton, in biography mode</h2>
+
+<p>The original runs the identical state machine with a flag inverted. Five
+behaviours change; each is traced to the branch that implements it.</p>
+
+<table>
+<caption>Table 7.1 — Biography mode versus hadith mode.</caption>
+<tr><th style="width:8cm">Behaviour</th><th>Source</th></tr>
+<tr><td>numbers are not boundaries — a rijal book numbers its entries and cites volume and page numbers mid-sentence</td><td>cpp:600</td></tr>
+<tr><td>tolerance inside a name tightens from 3 words to 1</td><td>cpp:612</td></tr>
+<tr><td>tolerance between narrators widens from 5 words to 100</td><td>cpp:612</td></tr>
+<tr><td>overflowing the name tolerance does not end the run; it falls back to the connector state</td><td>cpp:907</td></tr>
+<tr><td>an honorific does not end the run — a biography mentions the Prophet in passing and carries on</td><td>cpp:1085</td></tr>
+<tr><td>a name may open a run anywhere, not only after a sentence boundary</td><td>cpp:639</td></tr>
+</table>
+
+<p>The output is a flat, text-ordered list of every narrator mention with its
+offsets. This is the original's <code>narratorList</code>, and it is what the
+boundary detector consumes.</p>
+
+<h2>7.3 The feedback loop</h2>
+
+<p>The widened tolerance in Table 7.1 — 100 words between narrators — looks
+implausibly permissive on its own. It is not a fixed allowance. The counter it
+consumes is reset whenever a completed narrator is confirmed against the hadith
+graph:</p>
+
+<pre>if (biography-&gt;addNarrator(narrator))   currentData.bio_nrcCount = 0;</pre>
+
+<p>where <code>addNarrator</code> succeeds exactly when the narrator matches a node
+in the graph above the equality threshold. The automaton therefore tolerates up to a
+hundred words <em>since the last narrator the graph could confirm</em>. Each
+confirmation renews the budget, which is how a single run can span an entire
+biography entry, and exhaustion of the budget is what marks its end.</p>
+
+<div class="fig">
+<table style="font-size:9.5pt;">
+<tr>
+ <td class="box" style="width:26%">biography text<br><span class="small">token stream</span></td>
+ <td class="arrow" style="width:5%">&rarr;</td>
+ <td class="box" style="width:26%">biography automaton<br><span class="small">budget drains per word</span></td>
+ <td class="arrow" style="width:5%">&rarr;</td>
+ <td class="box" style="width:26%">completed narrator</td>
+</tr>
+<tr><td colspan="5" class="arrow">&nbsp;</td></tr>
+<tr>
+ <td class="boxk" colspan="1">NARRATOR GRAPH<br><span class="small">from the hadith books</span></td>
+ <td class="arrow">&larr;</td>
+ <td class="box" colspan="1">is this a real narrator?<br><span class="small">multi-key hash lookup</span></td>
+ <td class="arrow">&larr;</td>
+ <td class="box">&nbsp;</td>
+</tr>
+<tr>
+ <td colspan="5" style="border:none; text-align:center; padding-top:6pt;">
+ <span class="small">confirmed &rarr; <strong>budget reset to zero</strong> &rarr; the run continues</span></td>
+</tr>
+</table>
+</div>
+<p class="figcap">Figure 7.1 — The cross-document loop. One corpus supplies evidence
+that changes how the other is read. Removing the graph does not disable the
+automaton; it simply means the budget is never renewed.</p>
+
+<p>This single line explains the shape of the paper's Table 2. With the graph,
+narrator detection recall <em>falls</em> from 0.94 to 0.65, because only confirmable
+names survive; boundary recall <em>rises</em> from 0.41 to 0.93, because the
+survivors have correct extents.</p>
+
+<h2>7.4 Looking a narrator up in the graph</h2>
+
+<p>The lookup returns not a yes or no but a graded, de-duplicated list of candidate
+people with their similarities, sorted best first; "is a real narrator" simply means
+that list is non-empty. The original fills the list and returns the boolean in one
+call, and the ranked list is what the boundary detector uses to disambiguate.</p>
+
+<p>Two points of care. The threshold is read from the graph's own stored parameters
+rather than a local default, so that the two stages agree on who counts as the same
+person — biography names were previously matched at 0.1 against a graph built at
+0.5. And the graph's canonical forms are serialised with it, rather than being
+re-derived from the stored name strings, so that both sides of a comparison are
+canonicalised identically; otherwise a true match can be missed with no error
+raised.</p>
+
+<h2>7.5 Deriving the boundary</h2>
+
+<p>For each person in the graph, the detector collects every position in the mention
+list where that person occurs, and the positions of the person's neighbours in the
+graph. An occurrence scores one point for each distinct neighbour that appears
+within a fixed character distance of it. The best-scoring sets above a threshold are
+retained, and the <em>span</em> of the winning set — from the earliest to the latest
+mention it contains — is the entry boundary.</p>
+
+<div class="fig">
+<div class="arline">
+… ٣٥٦ - إبراهيم الشيباني: روى عن أبي الجارود، وروى عنه حرب بن الحسين. التهذيب …
+</div>
+<table style="font-size:9.5pt;">
+<tr><th style="width:4.5cm">Graph knows</th><th>Found nearby in the text?</th></tr>
+<tr><td><span class="ar">إبراهيم الشيباني</span> — subject</td><td>yes, at the entry head</td></tr>
+<tr><td>&nbsp;&nbsp;transmitted from <span class="ar">أبي الجارود</span></td><td>yes, 24 characters later &nbsp;<strong>+1</strong></td></tr>
+<tr><td>&nbsp;&nbsp;transmitted to <span class="ar">حرب بن الحسين</span></td><td>yes, 41 characters later &nbsp;<strong>+1</strong></td></tr>
+<tr><td colspan="2"><strong>score 2</strong> &rarr; boundary = [first mention … last mention]</td></tr>
+</table>
+</div>
+<p class="figcap">Figure 7.2 — Boundary derivation. The extent of the entry is not
+read from punctuation or from the entry number; it is the span of the narrators the
+graph confirms belong together.</p>
+
+<p>Detected entries are then accepted best-first, and any whose span overlaps one
+already accepted is rejected — a rijal book is a partition, so two entries cannot
+occupy the same text.</p>
+
+<h2>7.6 Annotating a partial graph</h2>
+
+<p>Section 4.1 of the paper describes a second mode, and it answers a different
+question. A scholar interested in a particular topic selects a handful of related
+narrations, builds a graph from those alone, and asks — for each narrator in it —
+which biography entries might describe them.</p>
+
+<p>In the original both modes live in one class, separated by two overridden
+methods: the full-book segmenter considers every narrator and keeps a single
+non-overlapping answer each, while the base class considers only the nodes the
+scholar selected and keeps all three top candidates without overlap rejection. The
+same scoring, asked differently. Segmentation must partition the book; annotation
+returns a ranked shortlist, because the scholar makes the final call. The paper is
+explicit that boundary accuracy is not well defined for this mode for exactly that
+reason.</p>
+
+<p>Why the restricted graph helps is worth stating, since it is the point of the
+method. In the full graph a prolific narrator has hundreds of neighbours, so the
+observation that a neighbour appears nearby carries little information. In a graph
+built from ten related narrations the same narrator has perhaps four, and their
+co-occurrence within one entry is strong evidence.</p>
+
+<h2>7.7 Measured behaviour</h2>
+
+<p>Table 7.2 reports the two conditions run over the Khoei corpus against a graph
+built from the first volume of <em>al-Kafi</em>. These are structural measurements,
+not accuracy: no gold annotation was available at the time of writing, and the run
+used the lexicon-only feature path. They are reported because they show the
+mechanism operating, not because they are results.</p>
+
+<table>
+<caption>Table 7.2 — The same automaton with and without the graph. Structural
+measurements only; see Chapter 10.</caption>
+<tr><th style="width:8cm">Measure</th><th>no graph</th><th>with graph</th></tr>
+<tr><td>narrator mentions found</td><td>5,048</td><td>5,441</td></tr>
+<tr><td>mentions confirmed against the graph</td><td>0</td><td>2,870</td></tr>
+<tr><td><strong>narrator runs</strong></td><td><strong>4,165</strong></td><td><strong>1,980</strong></td></tr>
+<tr><td>runs ended by budget exhaustion</td><td>4,852</td><td>505</td></tr>
+<tr><td>entry boundaries derived</td><td>0</td><td>33</td></tr>
+</table>
+
+<p>The comparison to note is the third row. The graph does not cause more narrators
+to be found — the counts are within eight percent of each other. It causes the runs
+to stop dying: fragmentation falls by more than half, and budget exhaustion by
+ninety percent. Boundaries can be derived at all only in the second condition,
+because without confirmations there is no evidence from which to derive them.</p>
+
+<h1>8. Stage 4 — The Evaluation Framework</h1>
+
+<h2>8.1 What has to be measured</h2>
+
+<p>Four distinct quantities appear in the original's results, and they require two
+different kinds of scorer.</p>
+
+<table>
+<caption>Table 8.1 — What each table measures.</caption>
+<tr><th style="width:2.4cm">Result</th><th style="width:5.4cm">Question</th><th>Scorer</th></tr>
+<tr><td>Table 1</td><td>did we group occurrences into the right people?</td><td>merge accuracy</td></tr>
+<tr><td>Table 2</td><td>did we find the right narrator names, with the right extents?</td><td>two-level agreement</td></tr>
+<tr><td>Table 3</td><td>did we find the right biography entries?</td><td>two-level agreement, one level</td></tr>
+<tr><td>§5</td><td>does the name metric beat edit distance?</td><td>pairwise classification</td></tr>
+</table>
+
+<h2>8.2 Two-level agreement</h2>
+
+<p>The scorer compares two annotations, each a list of main spans — a hadith, or a
+biography entry — with name spans nested inside them. It reports three things.</p>
+
+<p><strong>Segmentation</strong> is the proportion of main spans found at all.
+<strong>Detection</strong> is name-level: a predicted name counts as correct if it
+<em>overlaps</em> a gold name, matched greedily one-to-one so that one prediction
+cannot claim two gold names. There is no string comparison anywhere in this test;
+the original's equality function for this purpose is literally interval overlap.
+<strong>Boundary</strong> is measured at word granularity: of all the words belonging
+to gold narrator names, how many fell inside a predicted name span.</p>
+
+<p>The distinction between the second and third is the reason both are reported, and
+an example makes it concrete. Suppose the gold has three narrators and the system
+finds two, one of them truncated to its first word:</p>
+
+<table>
+<caption>Table 8.2 — Detection cannot see a bad extent; boundary can.</caption>
+<tr><th style="width:6cm">Measure</th><th>value</th><th>reading</th></tr>
+<tr><td>detection recall</td><td>0.67</td><td>two of three names found</td></tr>
+<tr><td>boundary recall</td><td>0.44</td><td>only four of nine gold words covered</td></tr>
+</table>
+
+<p>Detection is satisfied by any overlap, so a badly truncated name still counts as
+found. Only the boundary figure reveals that its extent is wrong. This is why "41%
+boundary recall" in the original means that 41% of gold narrator <em>words</em> fell
+inside a predicted span — not that 41% of narrators were found.</p>
+
+<p>Boundary is reported in two variants, as in the original: <em>minimum</em>
+boundaries score each matched pair independently, while <em>maximum</em> boundaries
+merge a run of mutually overlapping names into one group before scoring. A gold name
+split by two predictions therefore contributes twice under the first and once under
+the second; the difference between the two is itself informative.</p>
+
+<p>The weighting formula is preserved exactly from the original, since simplifying
+it changes the numbers:</p>
+
+<pre>recall     = (common / correct) * correct
+precision  = (common / detected) * correct
+denominator += correct</pre>
+
+<p>The multiplication by <code>correct</code> is a weight. It cancels in recall,
+producing a true micro-average, and does not cancel in precision, producing a
+recall-weighted macro-average. One consequence should be stated plainly because it
+affects interpretation: every contribution is weighted by the gold count, so a
+prediction overlapping no gold name has weight zero and cannot move precision.
+Precision here means "of the gold words we claimed, how many were right", not "how
+much of our output was correct".</p>
+
+<h2>8.3 Merge accuracy</h2>
+
+<p>Table 1 asks a different question, and the span-based scorer cannot answer it.
+Given the same occurrences, did we group them into the same people? For each
+occurrence:</p>
+
+<pre>common     = |gold cluster &cap; predicted cluster| - 1
+recall     = common / (|gold cluster| - 1)
+precision  = common / (|predicted cluster| - 1)</pre>
+
+<p>averaged over occurrences, with a singleton counting as trivially correct. This is
+B-Cubed with the element itself excluded — worth naming, since it is a recognised
+clustering measure whose properties are documented, rather than a bespoke formula.</p>
+
+<p>It behaves as one would want: under-merging costs recall while leaving precision
+intact, over-merging costs precision while leaving recall intact. The original
+reports two rows, and both are reproduced: <em>detected</em> considers only
+occurrences the system produced, isolating the merge logic, while <em>all</em>
+includes every gold occurrence, so that a narrator the segmenter never found counts
+as a cluster of one and all its merges as missed.</p>
+
+<h2>8.4 Comparing the name metric</h2>
+
+<p>The §5 evaluation is the only one that isolates the distance metric. Everywhere
+else it is entangled with segmentation and graph construction, so a change to it
+barely registers. Here it is the entire signal, and each item is a yes-or-no
+judgement on a pair of names rather than a span, which makes a usable annotation set
+cheap to produce.</p>
+
+<p>Three conditions are compared: normalised edit distance above 0.75, which is the
+baseline the original compares against; the structural metric of Section 6.2; and
+the structural metric with the nisba logic enabled — this project's implementation
+of the mechanism described in §3.2 of the paper but absent from the released
+system.</p>
+
+<p>Candidate pairs for annotation are generated from a built graph rather than at
+random, drawn from names the hash already considers plausible and sampled across
+score bands. Random pairs are almost all trivially different and would teach the
+evaluation nothing; the pairs that matter are the ones near the decision boundary:</p>
+
+<pre><span class="ar">أحمد</span>                     ||  <span class="ar">أحمد بن علي بن محمد بن عبد الله</span>
+<span class="ar">محمد بن السكين</span>           ||  <span class="ar">محمد بن علي بن معمر</span>
+<span class="ar">موسى بن محمد العجلي</span>      ||  <span class="ar">موسى بن محمد بن إسماعيل</span></pre>
+
+<h2>8.5 The gold layer</h2>
+
+<p>All four scorers consume one canonical annotation format, whatever its origin —
+imported from the original binaries, produced by hand, or bootstrapped from system
+output and then corrected. Each annotated unit carries a main span, the name spans
+within it, and optionally a person label per name, since merge accuracy needs
+cluster labels rather than offsets.</p>
+
+<p>Two safeguards are built into loading, both taken from the original and both
+consequential.</p>
+
+<p><strong>Un-reviewed annotation is refused.</strong> The original, finding no gold
+file, would write the current system output as a starting point, print "Correct it
+before use", and return failure so that no statistics were produced from it. Both
+halves matter. Here a bootstrapped file is marked un-reviewed and the loader refuses
+it outright. This is not hypothetical: an earlier component of this project
+generated its ground truth by calling the same segmenter it was evaluating, so that
+gold and prediction were the same object and every number derived from it was
+meaningless. That component has been removed.</p>
+
+<p><strong>Annotation is bound to its text.</strong> Each file records a hash of the
+text it was made against, and loading it against different text is an error rather
+than a warning. This catches the failure mode in which a change to normalisation
+shifts every span by a few characters and the numbers merely become quietly worse.</p>
+
+<p>A reader for the original Qt <code>QDataStream</code> format is also provided, so
+that if the original annotations are recovered they can be scored directly. The
+layout was taken from the C++ serialisation code rather than inferred: the flat span
+lists used for names and biography spans, the two-level structure used for hadith,
+and the pair-judgement map. One detail illustrates why guessing would not have
+worked — within the two-level format, connector components store their offsets
+twice, once as 64-bit values inside their own serialisation and again as 32-bit
+values in the enclosing loop. A parser that missed this would decode every
+subsequent record into plausible-looking nonsense. The reader is therefore strict:
+an unexpected type tag raises an error naming the byte position.</p>
+
+<h1>9. Implementation and Testing</h1>
+
+<h2>9.1 Technology</h2>
+
+<table>
+<caption>Table 9.1 — Technology stack.</caption>
+<tr><th style="width:5cm">Component</th><th>Choice</th></tr>
+<tr><td>Language</td><td>Python 3.11</td></tr>
+<tr><td>Morphological analysis</td><td>CAMeL Tools — MLE disambiguator by default, BERT optional</td></tr>
+<tr><td>Named-entity recognition</td><td>Wojood (SinaLab, Birzeit University), person spans</td></tr>
+<tr><td>Persistence</td><td>JSON throughout, replacing the original's Qt binary streams</td></tr>
+<tr><td>Web interface</td><td>FastAPI with a single-page front end</td></tr>
+<tr><td>Graph visualisation</td><td>Graphviz DOT export</td></tr>
+</table>
+
+<p>JSON was chosen over a binary format deliberately. The original's use of
+<code>QDataStream</code> is a large part of why its evaluation data is now
+unreadable without rebuilding the Qt project; a text format that any tool can open
+is worth the space it costs.</p>
+
+<h2>9.2 Module organisation</h2>
+
+<p>Twenty-four modules, grouped by stage. Appendix A lists them individually with
+line counts.</p>
+
+<table>
+<caption>Table 9.2 — Modules by stage.</caption>
+<tr><th style="width:2.6cm">Stage</th><th>Modules</th></tr>
+<tr><td>Foundation</td><td><code>normalization</code>, <code>lexicons</code>, <code>models</code></td></tr>
+<tr><td>Stage 1</td><td><code>engine</code>, <code>wojood</code>, <code>fsm</code>, <code>segmenter</code>, <code>quality_filter</code></td></tr>
+<tr><td>Stage 2</td><td><code>name_model</code>, <code>equality</code>, <code>name_hash</code>, <code>graph_nodes</code>, <code>graph_build</code>, <code>cycle_breaking</code>, <code>narrator_graph</code>, <code>kreachable</code>, <code>merge_graphs</code></td></tr>
+<tr><td>Stage 3</td><td><code>bio_fsm</code>, <code>narrator_matcher</code>, <code>biography_detector</code>, <code>partial_annotation</code></td></tr>
+<tr><td>Stage 4</td><td><code>spans</code>, <code>agreement</code>, <code>graph_agreement</code>, <code>gold</code>, <code>qdatastream</code></td></tr>
+<tr><td>Entry points</td><td><code>run_hadith</code>, <code>run_graph</code>, <code>run_biography</code>, <code>run_partial</code>, <code>run_equality</code>, <code>app</code></td></tr>
+</table>
+
+<h2>9.3 Separating fidelity from improvement</h2>
+
+<p>This system differs from the original in two quite different ways, and the
+distinction has to be maintained if any claim about it is to be defensible.</p>
+
+<p>Some differences are <em>corrections</em>: the gate on name evidence, the handling
+of honorifics, the two merge vetoes, the monotonic rank. These bring the system
+closer to what the original source does, and switching them off would make it less
+faithful, not more. They are always active.</p>
+
+<p>Others are <em>additions</em>: mechanisms with no counterpart in the original.
+Each of these is a parameter, and each defaults to the value used in normal running
+but can be turned off to recover the original behaviour exactly.</p>
+
+<table>
+<caption>Table 9.3 — Additions and their switches.</caption>
+<tr><th style="width:5.6cm">Addition</th><th style="width:4.4cm">Switch</th><th>Default</th></tr>
+<tr><td><span class="ar">قال:</span> can close a sanad</td><td><code>matn_cues</code></td><td>on</td></tr>
+<tr><td>a verb or particle breaks a name</td><td><code>pos_hard_stop</code></td><td>on</td></tr>
+<tr><td>one sanad per numbered hadith</td><td><code>one_chain_per_hadith</code></td><td>on</td></tr>
+<tr><td>nisba conflict and reinforcement</td><td><code>qualifiers_mode</code></td><td>off</td></tr>
+<tr><td>sequential ambiguity constraint</td><td><code>sequential_disambiguation</code></td><td>off</td></tr>
+<tr><td>tunable k in the neighbourhood search</td><td><code>k</code></td><td>1 (the original's fixed value)</td></tr>
+</table>
+
+<p>The first three default on because without them the system produces visibly worse
+output on this corpus; the last three default off so that the faithful baseline is
+what runs unless the improvement is explicitly requested. Both settings are
+reachable from the command line, so the ablation table of Section 10.2 can be
+produced without editing code.</p>
+
+<h2>9.4 Testing</h2>
+
+<p>The suite comprises 165 tests across eleven files. The governing constraint is
+that <em>none of them require CAMeL Tools or Wojood to be installed</em>: token
+features are either derived from the closed-class lexicons and the phrase matcher,
+or constructed by hand.</p>
+
+<p>This was a deliberate design choice with a practical justification. Loading the
+models and analysing a book takes minutes; a suite that required them would be run
+rarely, and regressions would be discovered long after the change that caused them.
+Constructing features by hand also allows the automaton to be driven into states
+that real text produces only occasionally, which is where state machines fail.</p>
+
+<table>
+<caption>Table 9.4 — Test files.</caption>
+<tr><th style="width:5.4cm">File</th><th style="width:1.6cm">Tests</th><th>Covers</th></tr>
+<tr><td><code>test_c1.py</code></td><td>13</td><td>gating of weak name evidence</td></tr>
+<tr><td><code>test_c3.py</code></td><td>7</td><td>honorifics and non-narrator tokens</td></tr>
+<tr><td><code>test_c5.py</code></td><td>13</td><td>the ablation switches</td></tr>
+<tr><td><code>test_a1.py</code></td><td>14</td><td>biography automaton and tolerance budget</td></tr>
+<tr><td><code>test_a2.py</code></td><td>11</td><td>graph lookup, end to end through JSON</td></tr>
+<tr><td><code>test_a3.py</code></td><td>15</td><td>boundary derivation, sequential disambiguation</td></tr>
+<tr><td><code>test_a4.py</code></td><td>29</td><td>the two-level scorer</td></tr>
+<tr><td><code>test_a5.py</code></td><td>22</td><td>the Qt reader, safeguards, validation</td></tr>
+<tr><td><code>test_a8.py</code></td><td>14</td><td>partial graph annotation</td></tr>
+<tr><td><code>test_table1.py</code></td><td>12</td><td>merge accuracy</td></tr>
+<tr><td><code>test_equality_eval.py</code></td><td>15</td><td>metric versus edit distance</td></tr>
+</table>
+
+<p>A separate harness rebuilds the narrator graph from a book and checks three
+invariants that require no annotation, because each has an intrinsic correctness
+criterion: no person may appear twice in one chain, no group may exceed the
+generation radius, and the graph must be acyclic. The first two hold. The third does
+not, for reasons taken up in Section 11.1.</p>
+
+<h2>9.5 Running the system</h2>
+
+<pre>python run_hadith.py    kafi1.txt                       # stage 1
+python quality_filter.py kafi1.hadiths.json             # filter
+python run_graph.py     kafi1.clean.hadiths.json        # stage 2
+python merge_graphs.py  kafi1..kafi8                    # multi-volume graph
+
+python run_biography.py khoei.txt kafi.graph.json --gold khoei.gold.json
+python run_partial.py   kafi1.clean.hadiths.json khoei.txt --contains ...
+python run_equality.py  pairs.json --sweep
+
+python tests/run_all.py                                 # 165 tests
+python tests/check_graph.py kafi1.clean.hadiths.json    # graph invariants</pre>
+
+<p>Two flags control the ablation: <code>--faithful</code> disables the three
+automaton additions, and <code>--loose-names</code> restores the ungated name
+evidence of Section 5.4.</p>
+
+<h1>10. Results</h1>
+
+<div class="note">
+<strong>Status.</strong> The system is complete and internally verified, but the
+gold annotations required to populate this chapter were not available at the time of
+writing. Section 3.5 explains why: the original evaluation files were excluded from
+the published repository. This chapter therefore specifies the protocol and the
+tables in full, so that producing the numbers is a matter of running the commands in
+Section 9.5 against annotation rather than of further development. The structural
+measurements already obtained are reported in Sections 6.8 and 7.7.
+</div>
+
+<h2>10.1 Annotation protocol</h2>
+
+<p>The original annotated roughly 10% of the narrations in each book, together with
+1,950 narrator names and 150 biographies. Scaled to what a single annotator can do
+carefully, the protocol here is:</p>
+
+<table>
+<caption>Table 10.1 — Planned annotation.</caption>
+<tr><th style="width:5.4cm">Artefact</th><th style="width:3cm">Quantity</th><th>Supports</th></tr>
+<tr><td>hadith narrator spans</td><td>~30 narrations</td><td>Table 2, upper block</td></tr>
+<tr><td>person labels on those spans</td><td>~200 occurrences</td><td>Table 1</td></tr>
+<tr><td>rijal entry and narrator spans</td><td>~50 entries</td><td>Tables 2 and 3</td></tr>
+<tr><td>narrator-pair judgements</td><td>~150 pairs</td><td>§5 comparison</td></tr>
+<tr><td>double-annotated overlap</td><td>10 of each</td><td>inter-annotator agreement</td></tr>
+</table>
+
+<p>Annotation is bootstrapped: the system writes its own output as a starting point,
+which a human then corrects. This is the original's workflow and it reduces the
+effort substantially. The safeguards of Section 8.5 prevent the obvious hazard.</p>
+
+<p>The final row addresses a limitation the original authors state but do not close.
+Their paper notes that a single annotator's conservative choices depressed the
+reported precision and that further work should report inter-annotator agreement.
+Double-annotating a slice and reporting agreement is inexpensive at this scale and
+makes the resulting figures defensible.</p>
+
+<h2>10.2 Experiments</h2>
+
+<p><strong>Experiment 1 — narrator graph accuracy (Table 1).</strong> Build the graph
+from the annotated narrations and score the merge decisions against the person
+labels, reporting the <em>detected</em> and <em>all</em> rows.</p>
+
+<p><strong>Experiment 2 — the cross-document effect (Table 2).</strong> Run the
+biography automaton twice over the same corpus, identical in every respect except
+that the graph lookup is supplied in one condition and withheld in the other. Score
+both with the same scorer. This is the paper's central claim and the design is
+deliberately minimal: one argument differs.</p>
+
+<p><strong>Experiment 3 — biography detection (Table 3).</strong> Score the detected
+entry spans against the annotated ones, partitioned as the original does into all
+entries, <em>interesting</em> entries — those naming at least two teachers or
+students — and those whose subject exists in the graph.</p>
+
+<p><strong>Experiment 4 — the name metric (§5).</strong> Score the three conditions of
+Section 8.4 over the annotated pairs, with a threshold sweep.</p>
+
+<p><strong>Experiment 5 — ablation.</strong> Re-run Experiments 2 and 3 with each
+addition of Table 9.3 disabled in turn, to establish what each contributes.</p>
+
+<h2>10.3 Result tables</h2>
+
+<table>
+<caption>Table 10.2 — Narrator graph accuracy. (To be completed.)</caption>
+<tr><th style="width:4cm">Row</th><th>recall</th><th>precision</th><th>F</th><th>original</th></tr>
+<tr><td>detected</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>0.673 / 0.824</td></tr>
+<tr><td>all</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>0.632 / 0.771</td></tr>
+</table>
+
+<table>
+<caption>Table 10.3 — Narrator detection and boundary in biographies, with and
+without the graph. (To be completed.)</caption>
+<tr><th style="width:5cm">Measure</th><th>no graph</th><th>with graph</th><th>original</th></tr>
+<tr><td>detection recall</td><td>&nbsp;</td><td>&nbsp;</td><td>0.94 &rarr; 0.65</td></tr>
+<tr><td>detection precision</td><td>&nbsp;</td><td>&nbsp;</td><td>0.81 &rarr; 0.91</td></tr>
+<tr><td>boundary recall</td><td>&nbsp;</td><td>&nbsp;</td><td>0.41 &rarr; 0.93</td></tr>
+<tr><td>boundary precision</td><td>&nbsp;</td><td>&nbsp;</td><td>0.945 &rarr; 0.96</td></tr>
+</table>
+
+<table>
+<caption>Table 10.4 — Biography detection. (To be completed.)</caption>
+<tr><th style="width:5cm">Subset</th><th>recall</th><th>precision</th><th>original</th></tr>
+<tr><td>all entries</td><td>&nbsp;</td><td>&nbsp;</td><td>0.13 / 0.72</td></tr>
+<tr><td>interesting entries</td><td>&nbsp;</td><td>&nbsp;</td><td>0.71 / 0.84</td></tr>
+<tr><td>subject present in the graph</td><td>&nbsp;</td><td>&nbsp;</td><td>0.80 / 0.89</td></tr>
+</table>
+
+<table>
+<caption>Table 10.5 — Name metric versus edit distance. (To be completed.)</caption>
+<tr><th style="width:5cm">Condition</th><th>recall</th><th>precision</th><th>F</th></tr>
+<tr><td>edit distance &gt; 0.75</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>structural metric</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>structural + nisba logic</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</table>
+
+<p>The right-hand column of the first three tables gives the original's figures. They
+are provided for orientation, not as a target: a different morphological stack, a
+different annotator and a partly different corpus make the absolute values
+incomparable. What is comparable is the <em>direction and magnitude</em> of the
+difference between the two conditions in Table 10.3, which is the claim under test.</p>
+
+<h1>11. Discussion and Limitations</h1>
+
+<h2>11.1 Name ambiguity is a limit of the method, not of this implementation</h2>
+
+<p>The graph built from the first volume of <em>al-Kafi</em> retains cycles after
+splitting, and it is worth being precise about why, because the reason is not a
+defect that further work would remove.</p>
+
+<p>Of the cycles remaining, 651 of 658 run entirely through people whose occurrences
+share a single exact written name. A group of such occurrences is atomic — no
+evidence distinguishes its members — so a fusion that lands inside one group cannot
+be undone by any splitting procedure. The people appearing on the most cycles are
+precisely the ambiguous short names: <span class="ar">أبي بصير</span>,
+<span class="ar">ابن فضال</span>, <span class="ar">يونس</span>. These genuinely are
+several different people sharing one written form, and the name-based metric has no
+means of separating them.</p>
+
+<p>This is the same phenomenon the original reports, and it is why its Table 1 shows
+63% recall: the paper attributes that figure to conservative splitting, which is the
+other side of the same coin. The honest position is that name evidence alone has a
+ceiling, and that this system reaches roughly the same ceiling as the original.
+Section 12.2 suggests what would raise it.</p>
+
+<h2>11.2 What the morphological substitution costs</h2>
+
+<p>CAMeL Tools and Wojood are trained predominantly on modern standard Arabic;
+hadith text is classical. This shows in two ways.</p>
+
+<p>Name detection is looser, which Section 5.4 addresses by gating rather than by
+trusting the tag. The gate recovers the original's behaviour but it substitutes
+positional context for a curated gazetteer, and a gazetteer would be better
+evidence.</p>
+
+<p>The geographic categories Sarf provided — <em>Name of Place</em>,
+<em>City/Town</em>, <em>Country</em> — have no replacement. Nisba detection is
+currently a shape test: a word beginning <span class="ar">ال</span> and ending
+<span class="ar">ي</span>. That is enough to route qualifiers correctly but not to
+support the reasoning of §3.2, which needs to know that Kufa is in Iraq. The nisba
+logic implemented here therefore compares qualifier sets rather than geography, and
+Section 12.2 identifies the lexicon that would complete it.</p>
+
+<h2>11.3 Threats to validity</h2>
+
+<p><strong>Single annotator.</strong> The planned gold will be produced by one
+person, who is also the system's author — a conflict the original shares. The
+double-annotated slice of Section 10.1 is the mitigation, and its agreement figure
+should be reported alongside the results rather than in a footnote.</p>
+
+<p><strong>Corpus scope.</strong> The graph is built from <em>al-Kafi</em> and the
+biographies from al-Khoei. Both are Shia works, so the results speak to that
+tradition; the original also evaluated on <em>Musnad Ahmad</em>, a Sunni collection
+with a different structural convention. Nothing in the design assumes one tradition,
+but that is an argument, not a measurement.</p>
+
+<p><strong>Structural measurements are not accuracy.</strong> The figures in Sections
+6.8 and 7.7 count invariant violations and structural properties, which need no
+annotation. They demonstrate that the mechanism operates; they say nothing about
+whether its output is correct. They are labelled as such wherever they appear.</p>
+
+<p><strong>Parameter selection.</strong> The thresholds inherited from the original
+were tuned on its corpus with its morphological stack. They are exposed as
+parameters and a sweep is provided, but selecting them on the same annotation used
+to report results would be circular. If tuning proves necessary, it should use a
+development slice held out from the reported one.</p>
+
+<h1>12. Conclusion and Future Work</h1>
+
+<h2>12.1 Conclusion</h2>
+
+<p>ANGE has been reimplemented in Python end to end, with CAMeL Tools and Wojood in
+place of Sarf and MySQL. The system segments hadith books into narrations, builds a
+narrator graph across them, uses that graph to read biography books, and scores
+every stage with the metrics the original defined.</p>
+
+<p>The work turned out to require more than translation. Reading the released source
+against the paper established that three described mechanisms were never implemented
+— the nisba logic in the distance metric, a tunable neighbourhood radius, and the
+sequential ambiguity constraint — and that two routines contain defects that
+silently discard results. All three mechanisms are implemented here and kept
+switchable; both defects are corrected and documented. Independently, the original
+evaluation data proved to have been excluded from the published repository, which
+means the reported tables are not reproducible from the published material by
+anyone; a reader for the original format is provided in case that data is
+recovered.</p>
+
+<p>Two corrections to this port's own earlier state were substantial enough to
+report. Accepting the morphological analyser's proper-noun tag without regard to
+context caused ordinary matn words to be read as narrators; gating it as the
+original does removed that class of error at its source. Treating the honorific
+<span class="ar">عليه السلام</span> as a narrator accounted for 11.5% of all narrator
+positions and produced the largest node in the graph.</p>
+
+<p>What remains before the project's central claim can be tested is annotation, not
+implementation.</p>
+
+<h2>12.2 Future work</h2>
+
+<p><strong>A narrator gazetteer and a nisba lexicon.</strong> The most valuable
+single addition. A curated list of known narrator names would replace positional
+context as the evidence behind name detection, and a nisba lexicon mapping
+adjectives of origin to places would complete the §3.2 metric with the geographic
+reasoning it describes. Both could be bootstrapped from the graph the system already
+produces.</p>
+
+<p><strong>Evidence beyond the name.</strong> Section 11.1 argues that name-based
+merging has a ceiling. The evidence that would raise it is already in the data: two
+occurrences of <span class="ar">أبي بصير</span> transmitting from entirely disjoint
+sets of teachers are probably different people. Using neighbourhood structure as a
+merge criterion, rather than only as a post-hoc consistency check, is the natural
+next step.</p>
+
+<p><strong>Iterative refinement.</strong> The paper describes repeating the biography
+pass with progressively lower thresholds, each pass adding narrators the previous
+missed. The infrastructure for this exists; the loop does not.</p>
+
+<p><strong>The application.</strong> The end state the original paper depicts is a
+scholar selecting a narration, seeing its chain as a graph, and finding each
+narrator annotated with the credibility assessment drawn from the rijal literature.
+Every component of that is now present. Assembling them into an interface is a
+matter of presentation rather than of research, and it is what would make the work
+useful to the people it is for.</p>
+
+<h1>References</h1>
+
+<table style="font-size:10.5pt;">
+<tr><td style="border:none; width:1.2cm; vertical-align:top;">[1]</td>
+<td style="border:none;">F. Zaraket and J. Makhlouta. "Arabic Cross-Document NLP for the Hadith and Biography Literature." <em>Proceedings of the Twenty-Fifth International Florida Artificial Intelligence Research Society Conference (FLAIRS-25)</em>, pp. 256–261, 2012.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[2]</td>
+<td style="border:none;">F. Zaraket and J. Makhlouta. ATSarf source distribution. <code>atmine</code> repository, <code>ATSarf/src/case/</code>.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[3]</td>
+<td style="border:none;">O. Obeid et al. "CAMeL Tools: An Open Source Python Toolkit for Arabic Natural Language Processing." <em>LREC</em>, 2020.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[4]</td>
+<td style="border:none;">M. Jarrar et al. "Wojood: Nested Arabic Named Entity Corpus and Recognition using BERT." <em>LREC</em>, 2022.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[5]</td>
+<td style="border:none;">T. Buckwalter. "Buckwalter Arabic Morphological Analyzer Version 1.0." Linguistic Data Consortium, LDC2002L49, 2002.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[6]</td>
+<td style="border:none;">A. Azmi and N. Bin Badia. "iTree — Automating the Construction of the Narration Tree of Hadiths." <em>Natural Language Processing and Knowledge Engineering</em>, 2010.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[7]</td>
+<td style="border:none;">K. Shaalan and H. Raza. "NERA: Named Entity Recognition for Arabic." <em>JASIST</em> 60(8), 2009.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[8]</td>
+<td style="border:none;">A. Bagga and B. Baldwin. "Entity-Based Cross-Document Coreferencing Using the Vector Space Model." <em>COLING-ACL</em>, 1998. (B-Cubed.)</td></tr>
+<tr><td style="border:none; vertical-align:top;">[9]</td>
+<td style="border:none;">M. i. Y. Al-Kulayni. <em>Kitab al-Kafi</em>. Taaruf, 1996.</td></tr>
+<tr><td style="border:none; vertical-align:top;">[10]</td>
+<td style="border:none;">A. Al-Kassem Al-Khoei. <em>Mu'jam Rijal al-Hadith</em>.</td></tr>
+</table>
+
+<h1>Appendix A — Module Inventory</h1>
+
+<table style="font-size:9.5pt;">
+<tr><th style="width:4.4cm">Module</th><th style="width:1.8cm">Lines</th><th>Responsibility</th></tr>
+<tr><td><code>normalization.py</code></td><td>190</td><td>text cleaning with an index map to the original</td></tr>
+<tr><td><code>lexicons.py</code></td><td>340</td><td>closed-class word lists; honorific and Prophet vocabularies</td></tr>
+<tr><td><code>models.py</code></td><td>257</td><td>core data structures</td></tr>
+<tr><td><code>engine.py</code></td><td>480</td><td>token features; CAMeL and Wojood integration; name gating</td></tr>
+<tr><td><code>wojood.py</code></td><td>292</td><td>standalone runner for the NER model</td></tr>
+<tr><td><code>fsm.py</code></td><td>680</td><td>the segmentation automaton</td></tr>
+<tr><td><code>segmenter.py</code></td><td>211</td><td>book-level driver; matn linking; metadata</td></tr>
+<tr><td><code>quality_filter.py</code></td><td>190</td><td>rejects narrations lacking sanad structure</td></tr>
+<tr><td><code>name_model.py</code></td><td>200</td><td>canonicalisation into levels and qualifiers</td></tr>
+<tr><td><code>equality.py</code></td><td>217</td><td>the distance metric; edit-distance baseline</td></tr>
+<tr><td><code>name_hash.py</code></td><td>210</td><td>multi-key hash; primary key generation</td></tr>
+<tr><td><code>graph_nodes.py</code></td><td>290</td><td>the three node types</td></tr>
+<tr><td><code>graph_build.py</code></td><td>390</td><td>two-stage merge with both vetoes</td></tr>
+<tr><td><code>cycle_breaking.py</code></td><td>320</td><td>dissolve-and-re-merge splitting</td></tr>
+<tr><td><code>narrator_graph.py</code></td><td>300</td><td>orchestration; ranks; persistence; DOT export</td></tr>
+<tr><td><code>kreachable.py</code></td><td>134</td><td>bounded reachability queries</td></tr>
+<tr><td><code>merge_graphs.py</code></td><td>238</td><td>combining graphs across volumes</td></tr>
+<tr><td><code>bio_fsm.py</code></td><td>330</td><td>biography-mode automaton and tolerance budget</td></tr>
+<tr><td><code>narrator_matcher.py</code></td><td>210</td><td>graph lookup returning graded candidates</td></tr>
+<tr><td><code>biography_detector.py</code></td><td>330</td><td>boundary derivation; sequential disambiguation</td></tr>
+<tr><td><code>partial_annotation.py</code></td><td>270</td><td>§4.1 partial graph annotation</td></tr>
+<tr><td><code>spans.py</code></td><td>110</td><td>interval and word-counting primitives</td></tr>
+<tr><td><code>agreement.py</code></td><td>330</td><td>two-level scorer</td></tr>
+<tr><td><code>graph_agreement.py</code></td><td>210</td><td>merge-accuracy scorer</td></tr>
+<tr><td><code>gold.py</code></td><td>360</td><td>annotation store; safeguards; validation</td></tr>
+<tr><td><code>qdatastream.py</code></td><td>260</td><td>reader for the original Qt binaries</td></tr>
+</table>
+
+<h1>Appendix B — Parameters</h1>
+
+<table style="font-size:9.5pt;">
+<tr><th style="width:4.6cm">Parameter</th><th style="width:1.8cm">Default</th><th>Meaning</th></tr>
+<tr><td><code>nmc_max</code></td><td>3</td><td>non-name words tolerated inside a name (hadith mode)</td></tr>
+<tr><td><code>nrc_max</code></td><td>5</td><td>words tolerated between narrators (hadith mode)</td></tr>
+<tr><td><code>narr_min</code></td><td>3</td><td>narrators required for a chain to be accepted</td></tr>
+<tr><td><code>bio_nmc_max</code></td><td>1</td><td>as above, biography mode</td></tr>
+<tr><td><code>bio_nrc_max</code></td><td>100</td><td>words tolerated since the last graph-confirmed narrator</td></tr>
+<tr><td><code>equality_threshold</code></td><td>0.5</td><td>minimum metric score to merge two occurrences</td></tr>
+<tr><td><code>equality_radius</code></td><td>3</td><td>maximum generation span of a merged group</td></tr>
+<tr><td><code>delta</code></td><td>0.2</td><td>threshold increment per cycle-breaking pass</td></tr>
+<tr><td><code>near_max_chars</code></td><td>100</td><td>proximity window for confirming a neighbour</td></tr>
+<tr><td><code>bio_threshold</code></td><td>2</td><td>confirmed neighbours required for an entry</td></tr>
+<tr><td><code>k</code></td><td>1</td><td>neighbourhood radius (the original's fixed value)</td></tr>
+<tr><td><code>max_candidates</code></td><td>3</td><td>ranked shortlist length in partial annotation</td></tr>
+</table>
+
+<h1>Appendix C — Verification Without Annotation</h1>
+
+<p>Three properties of the narrator graph can be checked without any human
+annotation, because each has an intrinsic correctness criterion. They are the first
+line of defence against regression and are reported by
+<code>tests/check_graph.py</code>.</p>
+
+<table>
+<caption>Table C.1 — Invariants and current status on <em>al-Kafi</em> vol. 1.</caption>
+<tr><th style="width:7.4cm">Invariant</th><th>Status</th></tr>
+<tr><td>no person appears twice in one chain</td><td>0 violations</td></tr>
+<tr><td>no group spans more than <code>equality_radius</code> generations</td><td>0 violations</td></tr>
+<tr><td>the graph is acyclic</td><td>843 back-edges — see §11.1</td></tr>
+<tr><td>generation rank increases along every edge</td><td>holds on the acyclic part</td></tr>
+</table>
+
+<p>The rasoul node is exempt from the second invariant, as it is in the original: a
+reference to the Prophet or an Imam is indexed under a single key regardless of its
+depth in a chain, because such a figure legitimately appears at any generation.</p>
