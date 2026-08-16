@@ -48,7 +48,7 @@ import json
 import sys
 from pathlib import Path
 
-from agreement import TwoLevelItem, score, format_report
+from agreement import TwoLevelItem, score, score_one_level, format_report
 from bio_fsm import BiographyFSM, BioParams
 from biography_detector import BiographyDetector, BiographyParams
 from gold import (GoldError, bootstrap_from_biographies, load_for_scoring,
@@ -127,6 +127,67 @@ def as_predictions(detected, mentions):
                          names=[(mentions[i].start, mentions[i].end)
                                 for i in b.mention_indices])
             for b in detected]
+
+
+def narrator_spans(mentions, confirmed_only=False):
+    """
+    The flat list of narrator name spans — what TABLE 2 scores.
+
+    This must NOT be routed through the detected entries. Table 2 is
+    "Narrator detection in biographies": its two column groups are whether a
+    narrator was found at all, and whether the span OF HIS NAME is right. It
+    says nothing about entry boundaries, which are Table 3. Scoring it through
+    `detected` would collapse the no-graph column to zero, because that
+    condition derives no entries by construction.
+
+    `confirmed_only` reproduces the original's filter. addNarrators
+    (narratordetector.cpp:186-205) appends a narrator to `narratorList` only
+    when its graph match list is non-empty:
+
+        if (size > 0) { narratorList.append((*biography)[i]); ... }
+
+    So in the cross-document condition the original DISCARDS every narrator the
+    graph does not recognise. That single test is what produces both halves of
+    the Table 2 trade-off: detection recall falls (narrators are thrown away)
+    while boundary recall rises (a narrator whose span is wrong canonizes onto
+    nobody, so it is exactly what gets thrown away). The graph is a filter, not
+    a corrector — it never adjusts a span.
+
+    Without this flag the two columns would be numerically identical, since the
+    automaton produces the same spans either way.
+    """
+    return [(m.start, m.end) for m in mentions
+            if not confirmed_only or m.confirmed]
+
+
+def gold_narrator_spans(gold_items):
+    """Every gold narrator span, flattened out of its entry."""
+    return sorted(n for item in gold_items for n in item.names)
+
+
+def restrict_to_detected(gold_spans, pred_spans):
+    """
+    Keep only the gold narrators that some prediction overlaps.
+
+    THIS IS THE PAPER'S DENOMINATOR, not a convenience. §6 says ANGE
+    "detected 40% of the boundaries OF THE EXTRACTED NARRATORS" — the boundary
+    column is conditioned on detection, and the original computes it that way
+    by construction: in overLapMainFinished a gold name that matches nothing is
+    skipped with `k++` and never appended to `tagWords`, so it never reaches
+    countCorrect (AbstractTwoLevelAgreement.cpp:123-131).
+
+    Our scorer deliberately diverges: it counts unmatched gold names with zero
+    overlap, because leaving them out inflates recall. That correction is right
+    for a standalone metric, but it makes the paper's headline movement
+    impossible to reproduce — discarding a narrator would then always LOWER
+    boundary recall, whereas in the original it raises it by removing the
+    badly-bounded names from the denominator entirely.
+
+    So we report both: "all gold" (our strict reading) and "detected only"
+    (the original's, and the one Table 2's numbers actually describe).
+    """
+    return [g for g in gold_spans
+            if any(g[0] <= p[1] and p[0] <= g[1] for p in pred_spans)]
 
 
 def describe(label, mentions, detected, fsm):
@@ -248,33 +309,83 @@ def main():
         print()
 
     gold_items = gold.to_items()
+
+    # ------------------------------------------------------------- TABLE 2
+    # NARRATOR level. Scored on the flat mention list, never through the
+    # detected entries — see narrator_spans() for why. The cross column
+    # applies the original's `if (size > 0)` filter.
+    gold_names = gold_narrator_spans(gold_items)
+    ng_spans = narrator_spans(ng_m)
+    wg_spans = narrator_spans(wg_m, confirmed_only=True)
+
+    t2_ng = score_one_level(gold_names, ng_spans, clean_text)
+    t2_wg = score_one_level(gold_names, wg_spans, clean_text)
+
+    # the paper's denominator: boundaries OF THE EXTRACTED NARRATORS
+    t2_ng_det = score_one_level(restrict_to_detected(gold_names, ng_spans),
+                                ng_spans, clean_text)
+    t2_wg_det = score_one_level(restrict_to_detected(gold_names, wg_spans),
+                                wg_spans, clean_text)
+
+    print("=" * 64)
+    print("TABLE 2 — narrator detection in biographies")
+    print("=" * 64)
+    print(f"{'':<28}{'NO-CROSS':>17}{'CROSS-DOC':>17}")
+    print("-" * 64)
+    print(f"{'  narrators scored':<28}{len(ng_spans):>17,}{len(wg_spans):>17,}")
+    for metric in ("recall", "precision"):
+        print(f"{'  detection ' + metric:<28}"
+              f"{t2_ng['detection'][metric]:>17}"
+              f"{t2_wg['detection'][metric]:>17}")
+    print("-" * 64)
+    print("  boundary, all gold narrators        (our strict reading)")
+    for metric in ("recall", "precision"):
+        print(f"{'    min ' + metric:<28}"
+              f"{t2_ng['boundary_min'][metric]:>17}"
+              f"{t2_wg['boundary_min'][metric]:>17}")
+    print("-" * 64)
+    print("  boundary, detected narrators only   (the paper's denominator)")
+    for metric in ("recall", "precision"):
+        print(f"{'    min ' + metric:<28}"
+              f"{t2_ng_det['boundary_min'][metric]:>17}"
+              f"{t2_wg_det['boundary_min'][metric]:>17}")
+    print("=" * 64)
+    print("the paper reports detection 0.94 -> 0.65, boundary 0.41 -> 0.93.")
+    print("Its boundary column is conditioned on detection, so compare it")
+    print("against the SECOND block; see restrict_to_detected().")
+    print()
+
+    # ------------------------------------------------------------- TABLE 3
+    # ENTRY level. Here the no-cross column is legitimately empty: without the
+    # graph no entry boundary can be derived at all.
     ng_score = score(gold_items, as_predictions(ng_d, ng_m), clean_text)
     wg_score = score(gold_items, as_predictions(wg_d, wg_m), clean_text)
 
-    print(format_report(ng_score, "NO-GRAPH (paper's baseline)"))
-    print()
-    print(format_report(wg_score, "WITH-GRAPH (cross-document)"))
-    print()
     print("=" * 64)
-    print("TABLE 2 — the graph's contribution")
+    print("TABLE 3 — biography entry detection")
     print("=" * 64)
-    print(f"{'':<24}{'NO-GRAPH':>19}{'WITH-GRAPH':>19}")
+    print(f"{'':<26}{'NO-CROSS':>18}{'CROSS-DOC':>18}")
     print("-" * 64)
-    for key, label in (("detection", "narrator detection"),
-                       ("boundary_min", "boundary (min)"),
-                       ("boundary_max", "boundary (max)")):
+    print(f"{'  entries detected':<26}{len(ng_d):>18,}{len(wg_d):>18,}")
+    for key, label in (("segmentation", "entry segmentation"),
+                       ("boundary_max", "entry boundary (max)")):
         for metric in ("recall", "precision"):
-            print(f"{'  ' + label + ' ' + metric:<24}"
-                  f"{ng_score[key][metric]:>19}{wg_score[key][metric]:>19}")
+            print(f"{'  ' + label + ' ' + metric:<26}"
+                  f"{ng_score[key][metric]:>18}{wg_score[key][metric]:>18}")
     print("=" * 64)
-    delta = (wg_score["boundary_max"]["recall"]
-             - ng_score["boundary_max"]["recall"])
-    print(f"boundary-recall change from the graph: {delta:+.3f}")
-    print("(the paper reports 0.41 -> 0.93 on its own books and gold)")
+    if not ng_d:
+        print("no-cross detects zero entries by construction: entry boundaries")
+        print("are derived from the graph, so with the graph off there are none.")
+    print()
+    print(format_report(wg_score, "WITH-GRAPH, full two-level report"))
 
     Path(args.out).write_text(json.dumps(
         {"pipeline": {"no_graph": ng_desc, "with_graph": wg_desc},
-         "scores": {"no_graph": ng_score, "with_graph": wg_score},
+         "table2_narrator": {
+             "all_gold": {"no_cross": t2_ng, "cross_doc": t2_wg},
+             "detected_only": {"no_cross": t2_ng_det,
+                               "cross_doc": t2_wg_det}},
+         "table3_entry": {"no_cross": ng_score, "cross_doc": wg_score},
          "gold": gold.stats()}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     print(f"\nsaved: {args.out}")
