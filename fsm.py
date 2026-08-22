@@ -1,56 +1,3 @@
-"""
-fsm.py
-======
-IDEA: The finite state machine — the BRAIN of segmentation (paper §3.1, Fig.3).
-
-Faithful port of the old system's getNextState() (hadithCommon.cpp:587,
-~500 lines of C++) — every behavioral detail preserved, rewritten for
-readability. It walks the text word by word (TokenInfo flags from
-engine.py) and decides:
-
-    "a sanad may be starting"  /  "still collecting this narrator's name"
-    "narrator finished, next one coming"  /  "sanad done, matn begins"
-    "false alarm — this was normal text"
-
-THE 5 STATES (old enum, hadithCommon.h:70):
-    TEXT      wandering in normal text, waiting for a sanad to start
-    NAME      inside a narrator's name        (جعفر، محمد...)
-    NMC       after a name connector          (بن، ابو، ام...)
-    NRC       after a narration connector     (عن، حدثنا، قال...)
-    STOP_WORD reached the Prophet/Imam        (رسول الله، عليه السلام)
-
-TRANSITION TABLE (as implemented below — matches the old switch/case):
-
-  state   sees NAME    sees NMC     sees NRC     sees RASOUL  sees other
-  ------- ------------ ------------ ------------ ------------ -------------
-  TEXT    ->NAME (a)   ->NMC (b)    ->NRC        ->STOP (c)   stay
-  NAME    stay(multi)  ->NMC        ->NRC (d)    ->STOP       (tolerated->NMC)
-  NMC     ->NAME       stay (e)     ->NRC (d)    ->STOP       stay, count++ (e)
-  NRC     ->NAME (new  ->NMC (f)    stay,        ->STOP       stay, count++ (g)
-             narrator)               count++ (g)
-  STOP    (exit: sanad complete -> TEXT, signal chain_end)    extend if RASOUL
-
-  (a) only right after a sentence boundary (old previousPunctuationInfo.fullstop)
-  (b) only family connectors (عن ابيه starting a chain), same boundary rule
-  (c) unless preceded by عبد/بن — then رسول is part of a NAME! (old
-      familyConnectorOr3abid check: "عبد الرسول" is a person's name)
-  (d) عن fast-track: after عن a NAME is expected immediately (old _3an flag)
-  (e) tolerance: up to nmc_max non-name words inside a name; if the name had
-      a valid family connector, ONE extra chance (old nmcValid second chance)
-  (f) family NMC after NRC = new narrator starting with kinship: عن ابيه
-  (g) tolerance: up to nrc_max words between narrators, then give up -> TEXT
-      (we drifted into the matn)
-
-CHAIN-END SIGNALS (old `return false`):
-  * leaving STOP_WORD state (the clean end: matn definitely starts)
-  * ending punctuation (fullstop / hadith number in hadith mode)
-  * nrc_max overflow (drifted into matn)
-  * nmc_max overflow without the second chance
-The segmenter then accepts the chain iff narrator_count >= narr_min.
-
-All parameters tunable (old hadithParameters):
-    nmc_max=3, nrc_max=5, narr_min=3  (bio_* variants come in Phase D)
-"""
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -58,34 +5,19 @@ from enum import Enum
 import lexicons
 from models import (Chain, Narrator, NarratorConnector, ConnectorType)
 
-
-# ===========================================================================
-# 1. Parameters — old hadithParameters (hadithCommon.h:28-54), all tunable
-# ===========================================================================
-
 @dataclass
 class FsmParams:
     nmc_max: int = 3      # max non-name words tolerated inside a name
     nrc_max: int = 5      # max words between narrators before giving up
     narr_min: int = 3     # min narrators for a valid sanad (used by segmenter)
 
-    # ---- heuristics THIS PORT ADDED; the old FSM had none of them ----------
-    # Kept switchable so a reproduction claim can present both columns rather
-    # than quietly shipping three undocumented rules. Note these are
-    # ADDITIONS, not the port's fidelity FIXES (C1's name gating, C3's
-    # honorific handling, the graph guards) — those are always on, because
-    # turning them off would make the port LESS faithful, not more.
     matn_cues: bool = True          # 'قال:' can close a sanad
     pos_hard_stop: bool = True      # a verb/pronoun/particle breaks a name
     one_chain_per_hadith: bool = True   # after the Imam, no new sanad until
-                                        # the next hadith number
-
+                                        
     @classmethod
     def faithful(cls, **kw):
-        """
-        Exactly the old system's automaton: none of the three additions.
-        Expect more matn leakage — that is the point of having the comparison.
-        """
+       
         return cls(matn_cues=False, pos_hard_stop=False,
                    one_chain_per_hadith=False, **kw)
 
@@ -110,45 +42,19 @@ class ChainCandidate:
     def narrator_count(self):
         return self.chain.narrator_count
 
-
-# ===========================================================================
-# 2. The FSM
-# ===========================================================================
-
 class HadithFSM:
-    """
-    Feed it the token list of a (normalized) text; collect ChainCandidates.
-
-        fsm = HadithFSM(FsmParams())
-        candidates = fsm.run(tokens)
-    """
+ 
 
     # punctuation that means "sentence ended here" (old ending_punc =
     # fullstop; hadith numbers also force it — handled in run())
     ENDING_PUNCT = {".", "؟", "?", "!", "؛", ";"}
     SOFT_PUNCT = {"،", ",", ":", "-", "(", ")"}
 
-    # Words that introduce the matn when followed by ':' — قال: / قالت: /
-    # سالته: ... After the last narrator, hadith books write "قال:" and then
-    # the content. The OLD SYSTEM HAD NO SUCH RULE (it closed a sanad only
-    # on a rasoul word, ending punctuation, or tolerance overflow) — which is
-    # why it swallowed matn text containing names, e.g.
-    #   "...محمد بن عيسى قال: كنت انا وابن فضال جلوسا اذ اقبل يونس..."
-    # produced a fake narrator "انا وابن فضال جلوسا اذ اقبل يونس" (93x!).
-    # This is our documented addition.
+    
     MATN_CUES = {"قال", "قالت", "قالوا", "يقول", "قلت", "سالته", "سالت",
                  "كتبت", "سمعته"}
 
-    # CAMeL POS tags that can NEVER be part of a person's name.
-    # Discovered on real kafi1 data: the inherited tolerance counters let
-    # the FSM swallow matn words into a name, producing fake narrators like
-    #   'عبد الله بن جندب انه كتب اليه الرضا'   (310 occurrences!)
-    #   'احمد بن الخضيب الا محمد بن الفرج يساله الخروج'
-    # A verb/pronoun/particle is grammatically impossible inside an Arabic
-    # personal name, so seeing one means the name ended. The OLD SYSTEM had
-    # no such rule (it only had the word-count tolerance), which is why it
-    # produced the same kind of noise. Our addition, and fully general:
-    # the judgement comes from CAMeL's POS tag, not from a word list.
+   
     NAME_BREAKING_POS = {"verb", "verb_pseudo", "pron", "pron_dem",
                          "pron_rel", "pron_interrog", "part", "part_neg",
                          "part_verb", "part_interrog", "conj_sub",
@@ -220,15 +126,7 @@ class HadithFSM:
         self.chain.add(NarratorConnector(token.word, token.start, token.end))
 
     def _mark_rasoul(self, token):
-        """
-        Attach an honorific / rasoul word.
-
-        AN HONORIFIC IS NEVER A NARRATOR OF ITS OWN. If no narrator is open,
-        the word belongs to the one just closed (عن ابي عبد الله عليه السلام),
-        not to a fresh node. Without this, 'عليه السلام' became a standalone
-        narrator 1,031 times in kafi1 — 11.5% of every narrator slot, and the
-        largest node in the whole graph.
-        """
+       
         # Already building the Prophet's node -> keep extending it, so
         # 'رسول' + 'الله' + 'صلا الله عليه واله' stay one narrator.
         if self.current_narrator is not None and self.current_narrator.is_rasoul:
@@ -273,14 +171,7 @@ class HadithFSM:
         return all(lexicons.is_honorific_modifier(w) for w in words)
 
     def _absorb_honorific_narrators(self):
-        """
-        Safety net for the invariant: whatever state produced it, a narrator
-        made only of honorific words is folded into the narrator before it
-        (or dropped if it is the first). Catches the cases the state handlers
-        cannot see — the flag combination that opens a fresh narrator on an
-        honorific depends on the morphology layer, so we enforce the result
-        rather than every path into it.
-        """
+       
         kept = [item for item in self.chain.items
                 if not (isinstance(item, Narrator)
                         and self._is_honorific_only(item))]
@@ -444,12 +335,7 @@ class HadithFSM:
         return bool(prev is not None and prev.is_nmc)
 
     def _is_matn_start(self, tokens, token) -> bool:
-        """
-        Is this cue the real start of the matn?
-        Requires: cue + ':' , and the word AFTER the colon is neither a
-        narration word (حدثني/عن/اخبرنا) nor a name — in those cases the
-        sanad continues and we must not close it.
-        """
+        
         idx = self._token_index.get(id(token))
         if idx is None or idx + 1 >= len(tokens):
             return False
